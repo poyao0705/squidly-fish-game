@@ -42,8 +42,9 @@ class FishGame {
     this.isMultiplayerMode = false;
     this.firebaseStars = [];
 
-    // Sync flags
-    this._firebaseStarsSyncInitialized = false;
+    // Per-cell star tracking
+    this._starStates = new Map(); // "R_C" → boolean
+    this._starListenersGridSize = null; // Grid size for which star listeners are active
 
     console.log("[FishGame] Controller ready.");
   }
@@ -170,15 +171,19 @@ class FishGame {
     SquidlyAPI.firebaseOnValue("gridSize", (value) => {
       const validated = this._gameService.validateGridSize(value);
       if (this.gridSize !== validated) {
+        // Clear stars from old grid before updating size
+        if (this.isHost) {
+          this._clearAllStarsInFirebase();
+        }
         this.gridSize = this._gameService.setGridSize(validated);
 
         if (this.currentCursor) this.currentCursor.setStarGrid(validated);
 
         this._updateStarGridUI();
-
-        if (this.isHost) {
-          this._setFirebaseStars([]);
-        }
+      }
+      // Set up star listeners for current grid size (first time or on size change)
+      if (this._starListenersGridSize !== this.gridSize) {
+        this._setupStarListeners(this.gridSize);
       }
     });
 
@@ -191,9 +196,6 @@ class FishGame {
         this._ui.updateScore(score);
       }
     });
-
-    // 3. Stars
-    this._initializeFirebaseStarsSync();
 
     // 4. Game Mode
     SquidlyAPI.firebaseOnValue("gameMode", (value) => {
@@ -220,54 +222,81 @@ class FishGame {
     });
   }
 
-  _initializeFirebaseStarsSync() {
-    if (this._firebaseStarsSyncInitialized) return;
-    this._firebaseStarsSyncInitialized = true;
+  /**
+   * Sets up per-cell Firebase listeners for the star grid.
+   * Each cell at (row, col) gets its own listener on "stars/R_C".
+   * @param {number} gridSize - Grid dimension
+   */
+  _setupStarListeners(gridSize) {
+    this._clearStarListeners();
+    this._starListenersGridSize = gridSize;
 
-    SquidlyAPI.firebaseOnValue("stars", (value) => {
-      this._onFirebaseStarsUpdate(value);
-    });
+    for (let row = 0; row < gridSize; row++) {
+      for (let col = 0; col < gridSize; col++) {
+        const key = `${row}_${col}`;
+        SquidlyAPI.firebaseOnValue(`stars/${key}`, (value) => {
+          this._onStarCellUpdate(row, col, value);
+        });
+      }
+    }
   }
 
-  _onFirebaseStarsUpdate(starsData) {
-    // Parse comma-separated string "row_col,row_col,..." back into array
-    // Handle null, undefined, and empty string cases
-    if (starsData == null || starsData === "") {
-      this.firebaseStars = [];
-    } else if (typeof starsData === "string") {
-      // Split and filter out empty entries (handles edge case of trailing commas)
-      this.firebaseStars = starsData
-        .split(",")
-        .filter((s) => s.length > 0)
-        .map((s) => {
-          const [row, col] = s.split("_").map(Number);
-          // Generate deterministic ID from position (needed for collectStar filtering)
-          return { id: `star_${row}_${col}`, row, col };
-        })
-        .filter((s) => !isNaN(s.row) && !isNaN(s.col));
-    } else {
-      // Legacy: handle array format during migration
-      this.firebaseStars = Array.isArray(starsData) ? starsData : [];
+  /**
+   * Clears star listener tracking and local star state.
+   */
+  _clearStarListeners() {
+    this._starStates.clear();
+    this._starListenersGridSize = null;
+    this.firebaseStars = [];
+  }
+
+  /**
+   * Handles a single star cell update from Firebase.
+   * @param {number} row - Cell row
+   * @param {number} col - Cell column
+   * @param {*} value - Firebase value (true or null)
+   */
+  _onStarCellUpdate(row, col, value) {
+    // Ignore updates for cells outside current grid
+    if (row >= this.gridSize || col >= this.gridSize) return;
+
+    const key = `${row}_${col}`;
+    this._starStates.set(key, value === true);
+    this._rebuildFirebaseStars();
+  }
+
+  /**
+   * Rebuilds the firebaseStars array from per-cell state
+   * and propagates to UI, renderer, and auto-regen logic.
+   */
+  _rebuildFirebaseStars() {
+    const stars = [];
+    for (const [key, exists] of this._starStates) {
+      if (exists) {
+        const [row, col] = key.split("_").map(Number);
+        stars.push({
+          id: this._gameService.createStarId(row, col),
+          row,
+          col,
+        });
+      }
     }
 
-    this._gameService.setStars(this.firebaseStars);
+    this.firebaseStars = stars;
+    this._gameService.setStars(stars);
 
     // Update UI
-    this._ui.updateStarCellStates(this.firebaseStars);
+    this._ui.updateStarCellStates(stars);
 
     // Update Renderer
     if (this.currentCursor) {
-      this.currentCursor.syncStarsFromFirebase(this.firebaseStars);
+      this.currentCursor.syncStarsFromFirebase(stars);
     }
 
-    // Auto-Regen Logic
+    // Auto-Regen Logic (single-player only)
     if (
       this.isHost &&
-      this._firebaseStarsSyncInitialized &&
-      this._gameService.shouldRegenerateStars(
-        this.firebaseStars,
-        this.isMultiplayerMode,
-      )
+      this._gameService.shouldRegenerateStars(stars, this.isMultiplayerMode)
     ) {
       setTimeout(() => {
         if (
@@ -279,6 +308,17 @@ class FishGame {
           this._generateRandomStarsToFirebase();
         }
       }, 500);
+    }
+  }
+
+  /**
+   * Sets all currently-active star cells to null in Firebase.
+   */
+  _clearAllStarsInFirebase() {
+    for (const [key, exists] of this._starStates) {
+      if (exists) {
+        SquidlyAPI.firebaseSet(`stars/${key}`, null);
+      }
     }
   }
 
@@ -296,7 +336,7 @@ class FishGame {
 
     if (result.shouldClearStars) {
       // Multiplayer: Clear stars
-      this._setFirebaseStars([]);
+      this._clearAllStarsInFirebase();
       this._updateStarGridUI();
     } else if (result.shouldGenerateStars) {
       // Single Player: Reset swap, hide grid, generate stars
@@ -347,37 +387,22 @@ class FishGame {
   }
 
   _onStarCellClick(row, col) {
-    // Ensure service is up to date
-    this._gameService.setStars(this.firebaseStars);
-    const newStars = this._gameService.toggleStarAtPosition(row, col);
-
-    // Optimistic update
-    this.firebaseStars = newStars;
-
-    // Sync
-    this._setFirebaseStars(newStars);
+    const key = `${row}_${col}`;
+    const currentlyExists = this._starStates.get(key) || false;
+    SquidlyAPI.firebaseSet(`stars/${key}`, currentlyExists ? null : true);
   }
 
   _generateRandomStarsToFirebase() {
     if (!this.isHost) return;
-    const stars = this._gameService.generateRandomStars(this.gridSize);
-    this._gameService.setStars(stars);
-    this.firebaseStars = stars;
-    this._setFirebaseStars(stars);
-  }
 
-  _setFirebaseStars(stars) {
-    // Serialize stars array as comma-separated string: "row_col,row_col,..."
-    // Sort by row then col for consistent ordering
-    const serialized =
-      stars.length > 0
-        ? stars
-            .slice() // Don't mutate original
-            .sort((a, b) => a.row - b.row || a.col - b.col)
-            .map((s) => `${s.row}_${s.col}`)
-            .join(",")
-        : "";
-    SquidlyAPI.firebaseSet("stars", serialized);
+    // Clear all existing stars
+    this._clearAllStarsInFirebase();
+
+    // Generate new random stars and set each individually
+    const stars = this._gameService.generateRandomStars(this.gridSize);
+    stars.forEach((star) => {
+      SquidlyAPI.firebaseSet(`stars/${star.row}_${star.col}`, true);
+    });
   }
 
   incrementScore() {
@@ -389,15 +414,22 @@ class FishGame {
 
   onStarCollected(starId) {
     if (!starId) return;
-    const result = this._gameService.collectStar(starId);
 
-    this.score = result.newScore;
-    this.firebaseStars = result.remainingStars;
+    // Parse row/col from star ID format "star_row_col"
+    const parts = starId.split("_");
+    const row = Number(parts[1]);
+    const col = Number(parts[2]);
+    if (isNaN(row) || isNaN(col)) return;
 
-    SquidlyAPI.firebaseSet("score", result.newScore);
-    this._setFirebaseStars(result.remainingStars);
+    // Remove star (listener will update local state)
+    SquidlyAPI.firebaseSet(`stars/${row}_${col}`, null);
 
-    this._ui.updateScore(result.newScore);
+    // Increment score
+    const newScore = this._gameService.incrementScore();
+    this.score = newScore;
+    SquidlyAPI.firebaseSet("score", newScore);
+    this._ui.updateScore(newScore);
+
     console.log(`[FishGame] Star collected: ${starId}`);
   }
 
