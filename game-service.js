@@ -1,35 +1,35 @@
 /**
  * @fileoverview Game Service - Pure Game Logic Layer
- * 
+ *
  * This module contains all game business logic without any dependencies on
  * Firebase, DOM, or external APIs. It provides pure functions and state management
  * for the fish game.
- * 
+ *
  * ## Design Principles
  * - No Firebase calls
  * - No DOM manipulation
  * - No global state access
  * - Pure functions where possible
  * - Testable in isolation
- * 
+ *
  * @module GameService
  */
 
 /**
  * GameService - Pure game logic service layer
- * 
+ *
  * Manages game state and provides methods for game operations:
  * - Star generation and management
  * - Score calculation
  * - Game mode rules
  * - Grid size validation
- * 
+ *
  * @class
  */
 class GameService {
   /**
    * Creates a new GameService instance
-   * 
+   *
    * @constructor
    * @param {Object} [initialState={}] - Initial game state
    * @param {number} [initialState.score=0] - Starting score
@@ -65,7 +65,7 @@ class GameService {
 
   /**
    * Validates and clamps grid size to valid range (1-4)
-   * 
+   *
    * @param {number} size - Grid size to validate
    * @returns {number} Validated grid size (1-4)
    */
@@ -78,7 +78,7 @@ class GameService {
   /**
    * Calculates how many stars should be generated for a given grid size
    * Uses 50% of total cells as the star count
-   * 
+   *
    * @param {number} gridSize - Grid dimension
    * @returns {number} Number of stars to generate
    */
@@ -91,7 +91,7 @@ class GameService {
   /**
    * Creates a star ID from grid position
    * Uses deterministic format to match IDs parsed from Firebase string format
-   * 
+   *
    * @param {number} row - Grid row
    * @param {number} col - Grid column
    * @returns {string} Star ID in format "star_row_col"
@@ -102,9 +102,9 @@ class GameService {
 
   /**
    * Generates random star positions using Fisher-Yates shuffle algorithm
-   * 
+   *
    * Pure function that generates stars without side effects.
-   * 
+   *
    * @param {number} gridSize - Grid dimension (1-4)
    * @returns {Array<{id: string, row: number, col: number}>} Array of star objects
    */
@@ -140,7 +140,7 @@ class GameService {
 
   /**
    * Increments the score by 1
-   * 
+   *
    * @returns {number} New score value
    */
   incrementScore() {
@@ -150,7 +150,7 @@ class GameService {
 
   /**
    * Collects a star (removes it from stars array) and increments score
-   * 
+   *
    * @param {string} starId - ID of the star to collect
    * @returns {Object} Result object with newScore and remainingStars
    * @returns {number} result.newScore - Updated score
@@ -173,14 +173,14 @@ class GameService {
   /**
    * Toggles a star at the given grid position
    * If a star exists at (row, col), removes it. Otherwise, adds a new star.
-   * 
+   *
    * @param {number} row - Grid row (0-indexed)
    * @param {number} col - Grid column (0-indexed)
    * @returns {Array<{id: string, row: number, col: number}>} Updated stars array
    */
   toggleStarAtPosition(row, col) {
     const existingIndex = this.stars.findIndex(
-      (s) => s.row === row && s.col === col
+      (s) => s.row === row && s.col === col,
     );
 
     if (existingIndex >= 0) {
@@ -204,10 +204,10 @@ class GameService {
 
   /**
    * Determines if stars should be auto-regenerated
-   * 
+   *
    * Stars should regenerate in single-player mode when all are collected.
    * In multiplayer mode, host must manually place stars.
-   * 
+   *
    * @param {Array} stars - Current stars array
    * @param {boolean} isMultiplayerMode - Whether multiplayer mode is active
    * @returns {boolean} True if stars should be regenerated
@@ -218,10 +218,10 @@ class GameService {
 
   /**
    * Sets the game mode and returns actions to take
-   * 
+   *
    * Pure logic for mode switching - returns what should happen,
    * but doesn't perform side effects.
-   * 
+   *
    * @param {string} mode - "single-player" or "multiplayer"
    * @param {boolean} currentIsMultiplayer - Current multiplayer state
    * @returns {Object} Mode change result
@@ -263,7 +263,7 @@ class GameService {
 
   /**
    * Sets the grid size (validates and updates internal state)
-   * 
+   *
    * @param {number} size - New grid size
    * @returns {number} Validated grid size
    */
@@ -274,7 +274,7 @@ class GameService {
 
   /**
    * Sets the stars array (for syncing from external source)
-   * 
+   *
    * @param {Array<{id: string, row: number, col: number}>} stars - Stars array
    */
   setStars(stars) {
@@ -283,7 +283,7 @@ class GameService {
 
   /**
    * Sets the score (for syncing from external source)
-   * 
+   *
    * @param {number} score - New score value
    */
   setScore(score) {
@@ -295,7 +295,7 @@ class GameService {
 
   /**
    * Gets current game state snapshot
-   * 
+   *
    * @returns {Object} Current game state
    */
   getState() {
