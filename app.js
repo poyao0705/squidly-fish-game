@@ -42,6 +42,14 @@ class FishGame {
     this.isMultiplayerMode = false;
     this.firebaseStars = [];
 
+    // Background music
+    this._bgm = null;
+    this.volume = 1.0;
+
+    // SFX
+    this._collectStarSfx = new Audio("./collect_star_effect.mp3");
+    this._collectStarSfx.preload = "auto";
+
     // Per-cell star tracking
     this._starStates = new Map(); // "R_C" → boolean
     this._starListenersGridSize = null; // Grid size for which star listeners are active
@@ -61,7 +69,7 @@ class FishGame {
   // INITIALIZATION
   // ==========================================================================
 
-  init() {
+  async init() {
     this._initializeHostDefaults();
     this._initFishCursor();
     this._setupEventListeners();
@@ -70,6 +78,48 @@ class FishGame {
 
     // Initialize UI components
     this._ui.init(this.score);
+    await this._initVolume();
+    this._initBackgroundMusic();
+  }
+
+  async _initVolume() {
+    const sessionInfo =
+      typeof session_info !== "undefined" ? session_info : null;
+    if (!sessionInfo) return;
+    await SquidlyAPI.getSettings(
+      `${sessionInfo.user}/volume/level`,
+      this._updateVolume,
+    );
+    SquidlyAPI.addSettingsListener(
+      `${sessionInfo.user}/volume/level`,
+      this._updateVolume,
+    );
+  }
+
+  _updateVolume = (value) => {
+    const parsed = parseFloat(value) / 100;
+    this.volume = isNaN(parsed) ? 1.0 : Math.min(1.0, Math.max(0.0, parsed));
+    if (this._bgm) this._bgm.volume = this.volume;
+    if (this._collectStarSfx) this._collectStarSfx.volume = this.volume;
+  };
+
+  _initBackgroundMusic() {
+    if (this._bgm) return;
+
+    this._bgm = new Audio("./fish_bgm.mp3");
+    this._bgm.loop = true;
+    this._bgm.volume = this.volume;
+    this._bgm.preload = "auto";
+
+    this._playBackgroundMusic();
+  }
+
+  _playBackgroundMusic() {
+    if (!this._bgm) return;
+
+    this._bgm.play().catch((error) => {
+      console.warn("[FishGame] BGM autoplay failed.", error);
+    });
   }
 
   _initFishCursor() {
@@ -420,6 +470,10 @@ class FishGame {
     const row = Number(parts[1]);
     const col = Number(parts[2]);
     if (isNaN(row) || isNaN(col)) return;
+
+    // Play collect SFX
+    this._collectStarSfx.currentTime = 0;
+    this._collectStarSfx.play().catch(() => {});
 
     // Remove star (listener will update local state)
     SquidlyAPI.firebaseSet(`stars/${row}_${col}`, null);
