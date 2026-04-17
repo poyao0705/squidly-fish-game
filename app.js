@@ -99,8 +99,8 @@ class FishGame {
   _updateVolume = (value) => {
     const parsed = parseFloat(value) / 100;
     this.volume = isNaN(parsed) ? 1.0 : Math.min(1.0, Math.max(0.0, parsed));
-    if (this._bgm) this._bgm.volume = this.volume;
-    if (this._collectStarSfx) this._collectStarSfx.volume = this.volume;
+    if (this._bgm) this._bgm.volume = this.volume / 2;
+    if (this._collectStarSfx) this._collectStarSfx.volume = this.volume / 2;
   };
 
   _initBackgroundMusic() {
