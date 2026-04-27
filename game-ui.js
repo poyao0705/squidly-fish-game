@@ -10,9 +10,18 @@
 export class GameUI {
   constructor() {
     this._scoreElement = null;
+    this._hudElement = null;
+    this._layoutStarsElement = null;
+    this._layoutProgressTextElement = null;
     this._starGridElement = null;
     this._starCells = [];
     this._swapButtonKey = null;
+    this._increaseGridButtonKey = null;
+    this._onGridIncrease = null;
+    this._canIncreaseGrid = false;
+    this._isLayoutComplete = false;
+    this._layoutStarsEarned = 0;
+    this._layoutStarsRequired = 3;
   }
 
   /**
@@ -20,7 +29,7 @@ export class GameUI {
    * @param {number} initialScore
    */
   init(initialScore = 0) {
-    this._createScoreDisplay(initialScore);
+    this._createTopHud(initialScore);
   }
 
   /**
@@ -34,33 +43,43 @@ export class GameUI {
   }
 
   /**
-   * Sets up sidebar icons for Grid control.
-   * @param {Object} callbacks - { onGridIncrease, onGridDecrease }
+   * Sets up sidebar icon for gated Grid progression.
+   * @param {Object} callbacks - { onGridIncrease, canIncreaseGrid }
    */
-  setupGridControls({ onGridIncrease, onGridDecrease }) {
-    // Grid +
-    SquidlyAPI.setIcon(
-      1,
-      0,
-      {
-        symbol: "add",
-        displayValue: "Increase Grid",
-        type: "action",
-      },
-      onGridIncrease,
-    );
+  setupGridControls({ onGridIncrease, canIncreaseGrid = false }) {
+    this._onGridIncrease = onGridIncrease;
+    this._canIncreaseGrid = canIncreaseGrid;
+    this._updateGridIncreaseControl();
+  }
 
-    // Grid -
-    SquidlyAPI.setIcon(
-      2,
-      0,
-      {
-        symbol: "minus",
-        displayValue: "Decrease Grid",
-        type: "action",
-      },
-      onGridDecrease,
-    );
+  /**
+   * Updates the layout-completion HUD and grid progression gate.
+   * @param {number} earnedStars - Layout stars earned toward unlocking next grid
+   * @param {number} requiredStars - Layout stars required to complete this grid
+   * @param {?boolean} canIncreaseGrid - Whether the next grid can be selected
+   */
+  updateLayoutProgress(earnedStars, requiredStars = 3, canIncreaseGrid = null) {
+    const parsedRequired = Number(requiredStars);
+    const safeRequired =
+      Number.isFinite(parsedRequired) && parsedRequired > 0
+        ? Math.round(parsedRequired)
+        : 3;
+
+    const parsedEarned = Number(earnedStars);
+    this._layoutStarsRequired = safeRequired;
+    this._layoutStarsEarned =
+      Number.isFinite(parsedEarned) && parsedEarned >= 0
+        ? Math.min(safeRequired, Math.round(parsedEarned))
+        : 0;
+
+    this._isLayoutComplete =
+      this._layoutStarsEarned >= this._layoutStarsRequired;
+    this._canIncreaseGrid =
+      typeof canIncreaseGrid === "boolean"
+        ? canIncreaseGrid
+        : this._isLayoutComplete;
+    this._renderLayoutProgress();
+    this._updateGridIncreaseControl();
   }
 
   /**
@@ -81,7 +100,7 @@ export class GameUI {
         0,
         {
           symbol: "switch",
-          displayValue: "Switch Mode",
+          displayValue: "Swap Host/Participant Roles",
           type: "action",
         },
         onSwapClick,
@@ -180,22 +199,107 @@ export class GameUI {
     this._starCells = [];
   }
 
-  _createScoreDisplay(initialScore) {
-    if (this._scoreElement) return;
+  _updateGridIncreaseControl() {
+    if (this._increaseGridButtonKey) {
+      SquidlyAPI.removeIcon(this._increaseGridButtonKey);
+      this._increaseGridButtonKey = null;
+    }
+
+    const isCompletedWithoutNextGrid =
+      this._isLayoutComplete && !this._canIncreaseGrid;
+
+    this._increaseGridButtonKey = SquidlyAPI.setIcon(
+      1,
+      0,
+      {
+        symbol: this._canIncreaseGrid
+          ? "add"
+          : isCompletedWithoutNextGrid
+            ? "check"
+            : "tools-unlocked",
+        displayValue: this._canIncreaseGrid
+          ? "Increase Grid"
+          : isCompletedWithoutNextGrid
+            ? "Grid Complete"
+            : `Clear all stars ${this._layoutStarsRequired} times to unlock`,
+        type: "action",
+      },
+      () => {
+        if (!this._canIncreaseGrid || !this._onGridIncrease) return;
+        this._onGridIncrease();
+      },
+    );
+  }
+
+  _renderLayoutProgress() {
+    if (!this._layoutStarsElement || !this._layoutProgressTextElement) return;
+
+    this._layoutStarsElement.innerHTML = "";
+
+    for (let i = 0; i < this._layoutStarsRequired; i++) {
+      const star = document.createElement("span");
+      star.className =
+        i < this._layoutStarsEarned
+          ? "hud-layout-star earned"
+          : "hud-layout-star";
+      star.textContent = "\u2B50";
+      this._layoutStarsElement.appendChild(star);
+    }
+
+    this._layoutProgressTextElement.textContent = this._isLayoutComplete
+      ? this._canIncreaseGrid
+        ? "Next grid unlocked"
+        : "Grid complete"
+      : `${this._layoutStarsEarned}/${this._layoutStarsRequired} clears`;
+  }
+
+  _createTopHud(initialScore) {
+    if (this._hudElement) return;
 
     const container = document.createElement("div");
-    container.id = "score-container";
+    container.id = "top-hud";
 
-    const starIcon = document.createElement("span");
-    starIcon.className = "score-icon";
-    starIcon.textContent = "\u2B50";
+    const scoreSection = document.createElement("div");
+    scoreSection.className = "hud-section score-section";
+
+    const scoreLabel = document.createElement("span");
+    scoreLabel.className = "hud-label";
+    scoreLabel.textContent = "Score";
+
+    const scoreIcon = document.createElement("span");
+    scoreIcon.className = "score-icon";
+    scoreIcon.textContent = "\u2B50";
 
     this._scoreElement = document.createElement("span");
     this._scoreElement.className = "score-value";
     this._scoreElement.textContent = initialScore;
 
-    container.appendChild(starIcon);
-    container.appendChild(this._scoreElement);
+    const progressSection = document.createElement("div");
+    progressSection.className = "hud-section layout-progress-section";
+
+    const progressLabel = document.createElement("span");
+    progressLabel.className = "hud-label";
+    progressLabel.textContent = "Grid Progress";
+
+    this._layoutStarsElement = document.createElement("div");
+    this._layoutStarsElement.className = "hud-layout-stars";
+
+    this._layoutProgressTextElement = document.createElement("span");
+    this._layoutProgressTextElement.className = "hud-progress-text";
+
+    scoreSection.appendChild(scoreLabel);
+    scoreSection.appendChild(scoreIcon);
+    scoreSection.appendChild(this._scoreElement);
+
+    progressSection.appendChild(progressLabel);
+    progressSection.appendChild(this._layoutStarsElement);
+    progressSection.appendChild(this._layoutProgressTextElement);
+
+    container.appendChild(scoreSection);
+    container.appendChild(progressSection);
     document.body.appendChild(container);
+
+    this._hudElement = container;
+    this._renderLayoutProgress();
   }
 }

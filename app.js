@@ -6,7 +6,7 @@
  */
 
 import { WebGLFishCursor } from "./index.js";
-import GameService from "./game-service.js";
+import GameService, { GAME_MODES, GAME_RULES } from "./game-service.js";
 import { GameUI } from "./game-ui.js";
 
 /**
@@ -19,10 +19,12 @@ class FishGame {
     const sessionInfo =
       typeof session_info !== "undefined" ? session_info : null;
     const hasSessionInfo = sessionInfo != null;
+    this._initialSessionInfo = sessionInfo;
 
     // Determine real host logic
     this._realIsHost = hasSessionInfo ? sessionInfo?.user === "host" : true;
     this._isSwapped = false;
+    this._participantActive = null;
 
     console.log("[FishGame] Initialized. Real IsHost:", this._realIsHost);
 
@@ -37,10 +39,13 @@ class FishGame {
     // 4. State
     // ------------------------------------------------------------------------
     this.currentCursor = null;
-    this.gridSize = 4;
+    this.gridSize = GAME_RULES.GRID_MIN_SIZE;
     this.score = 0;
     this.isMultiplayerMode = false;
     this.firebaseStars = [];
+    this.layoutStarsEarned = 0;
+    this.layoutStarsRequired = GAME_RULES.REQUIRED_LAYOUT_CLEARS;
+    this._layoutHadStars = false;
 
     // Background music
     this._bgm = null;
@@ -53,6 +58,10 @@ class FishGame {
     // Per-cell star tracking
     this._starStates = new Map(); // "R_C" → boolean
     this._starListenersGridSize = null; // Grid size for which star listeners are active
+    this._pendingStarStates = null; // Staged multiplayer star selections before pressing Set Stars
+    this._setStarsButtonKey = null;
+    this._activeStarClearKeys = new Set();
+    this._suppressNextLayoutClearProgress = false;
 
     console.log("[FishGame] Controller ready.");
   }
@@ -73,11 +82,13 @@ class FishGame {
     this._initializeHostDefaults();
     this._initFishCursor();
     this._setupEventListeners();
+    this._syncGameModeFromParticipantPresence(this._initialSessionInfo);
     this._setupFirebaseSubscriptions();
     this._setupSidebarIcons();
 
     // Initialize UI components
     this._ui.init(this.score);
+    this._syncLayoutProgressUI();
     await this._initVolume();
     this._initBackgroundMusic();
   }
@@ -137,13 +148,19 @@ class FishGame {
   }
 
   _initializeHostDefaults() {
-    if (!this.isHost) return;
+    if (!this._realIsHost) return;
+
+    const initialParticipantActive =
+      this._initialSessionInfo?.participantActive === true;
 
     const defaults = {
-      gridSize: 4,
+      gridSize: GAME_RULES.GRID_MIN_SIZE,
       score: 0,
-      gameMode: "single-player",
+      gameMode: initialParticipantActive
+        ? GAME_MODES.MULTIPLAYER
+        : GAME_MODES.SINGLE_PLAYER,
       isSwapped: false,
+      layoutStarsEarned: 0,
     };
 
     Object.entries(defaults).forEach(([key, val]) => {
@@ -179,37 +196,47 @@ class FishGame {
     });
 
     SquidlyAPI.addSessionInfoListener((info) => {
-      if (!this.isHost) return;
-
-      const participantActive = info.participantActive === true;
-      const targetMode = participantActive ? "multiplayer" : "single-player";
-
-      if (
-        (participantActive && !this.isMultiplayerMode) ||
-        (!participantActive && this.isMultiplayerMode)
-      ) {
-        console.log(`[FishGame] Auto-switching to ${targetMode}`);
-        SquidlyAPI.firebaseSet("gameMode", targetMode);
-      }
+      this._syncGameModeFromParticipantPresence(info);
     });
+  }
+
+  _syncGameModeFromParticipantPresence(info) {
+    if (!this._realIsHost) return;
+
+    const participantActive = info?.participantActive === true;
+    const isInitialPresenceSync = this._participantActive === null;
+    if (
+      !isInitialPresenceSync &&
+      this._participantActive === participantActive
+    ) {
+      return;
+    }
+
+    this._participantActive = participantActive;
+
+    const nextMode = participantActive
+      ? GAME_MODES.MULTIPLAYER
+      : GAME_MODES.SINGLE_PLAYER;
+
+    if (isInitialPresenceSync || participantActive !== this.isMultiplayerMode) {
+      console.log(
+        `[FishGame] Participant ${
+          participantActive ? "joined" : "left"
+        }. Automatically switching to ${nextMode}.`,
+      );
+      SquidlyAPI.firebaseSet("gameMode", nextMode);
+    }
   }
 
   _setupSidebarIcons() {
     this._ui.setupGridControls({
-      onGridIncrease: () => {
-        const newSize = Math.min(4, this.gridSize + 1);
-        if (newSize !== this.gridSize)
-          SquidlyAPI.firebaseSet("gridSize", newSize);
-      },
-      onGridDecrease: () => {
-        const newSize = Math.max(1, this.gridSize - 1);
-        if (newSize !== this.gridSize)
-          SquidlyAPI.firebaseSet("gridSize", newSize);
-      },
+      canIncreaseGrid: this._canIncreaseGrid(),
+      onGridIncrease: () => this._advanceGrid(),
     });
 
-    // Initial Swap Button Check
+    // Initial mode-dependent button checks
     this._updateSwapButton();
+    this._updateSetStarsButton();
   }
 
   // ==========================================================================
@@ -221,10 +248,7 @@ class FishGame {
     SquidlyAPI.firebaseOnValue("gridSize", (value) => {
       const validated = this._gameService.validateGridSize(value);
       if (this.gridSize !== validated) {
-        // Clear stars from old grid before updating size
-        if (this.isHost) {
-          this._clearAllStarsInFirebase();
-        }
+        this._prepareGridSizeChange();
         this.gridSize = this._gameService.setGridSize(validated);
 
         if (this.currentCursor) this.currentCursor.setStarGrid(validated);
@@ -234,6 +258,7 @@ class FishGame {
       // Set up star listeners for current grid size (first time or on size change)
       if (this._starListenersGridSize !== this.gridSize) {
         this._setupStarListeners(this.gridSize);
+        this._scheduleSinglePlayerStarGeneration();
       }
     });
 
@@ -245,6 +270,11 @@ class FishGame {
         this.score = score;
         this._ui.updateScore(score);
       }
+    });
+
+    // 3. Grid clear progress
+    SquidlyAPI.firebaseOnValue("layoutStarsEarned", (value) => {
+      this._setLayoutProgress(value, { syncFirebase: false });
     });
 
     // 4. Game Mode
@@ -267,7 +297,9 @@ class FishGame {
         }
 
         // Re-evaluate UI that depends on role
+        this._resetPendingStarSelection();
         this._updateStarGridUI();
+        this._updateSetStarsButton();
       }
     });
   }
@@ -311,7 +343,13 @@ class FishGame {
     if (row >= this.gridSize || col >= this.gridSize) return;
 
     const key = `${row}_${col}`;
-    this._starStates.set(key, this._parseStarCellValue(value));
+    const parsedValue = this._parseStarCellValue(value);
+    this._starStates.set(key, parsedValue);
+
+    if (!parsedValue) {
+      this._activeStarClearKeys.delete(key);
+    }
+
     this._rebuildFirebaseStars();
   }
 
@@ -339,50 +377,70 @@ class FishGame {
   }
 
   /**
-   * Rebuilds the firebaseStars array from per-cell state
-   * and propagates to UI, renderer, and auto-regen logic.
+   * Rebuilds the firebaseStars array from per-cell state, then delegates
+   * sync, progression, and auto-generation side effects.
    */
   _rebuildFirebaseStars() {
+    const stars = this._starsFromCellState();
+    const didClearLayout = this._layoutHadStars && stars.length === 0;
+
+    this._syncStars(stars);
+    this._handleLayoutClear(stars, didClearLayout);
+    this._scheduleSinglePlayerStarGeneration(
+      GAME_RULES.STAR_REGEN_DELAY_MS,
+      stars,
+    );
+  }
+
+  _starsFromCellState() {
     const stars = [];
+
     for (const [key, starData] of this._starStates) {
-      if (starData) {
-        const [row, col] = key.split("_").map(Number);
-        stars.push({
-          id: this._gameService.createStarId(row, col),
-          row,
-          col,
-          offsetX: typeof starData.offsetX === "number" ? starData.offsetX : 0,
-          offsetY: typeof starData.offsetY === "number" ? starData.offsetY : 0,
-        });
-      }
+      if (!starData) continue;
+
+      const [row, col] = key.split("_").map(Number);
+      stars.push({
+        id: this._gameService.createStarId(row, col),
+        row,
+        col,
+        offsetX: typeof starData.offsetX === "number" ? starData.offsetX : 0,
+        offsetY: typeof starData.offsetY === "number" ? starData.offsetY : 0,
+      });
     }
 
+    return stars;
+  }
+
+  _syncStars(stars) {
     this.firebaseStars = stars;
     this._gameService.setStars(stars);
+    this._ui.updateStarCellStates(this._getStarGridDisplayStars());
 
-    // Update UI
-    this._ui.updateStarCellStates(stars);
-
-    // Update Renderer
     if (this.currentCursor) {
       this.currentCursor.syncStarsFromFirebase(stars);
     }
+  }
 
-    // Auto-Regen Logic (single-player only)
+  _handleLayoutClear(stars, didClearLayout) {
+    if (stars.length > 0) {
+      this._layoutHadStars = true;
+      return;
+    }
+
+    if (!didClearLayout) return;
+
+    this._layoutHadStars = false;
     if (
-      this.isHost &&
-      this._gameService.shouldRegenerateStars(stars, this.isMultiplayerMode)
+      this._suppressNextLayoutClearProgress ||
+      this._activeStarClearKeys.size > 0
     ) {
-      setTimeout(() => {
-        if (
-          this._gameService.shouldRegenerateStars(
-            this.firebaseStars,
-            this.isMultiplayerMode,
-          )
-        ) {
-          this._generateRandomStarsToFirebase();
-        }
-      }, 500);
+      this._suppressNextLayoutClearProgress = false;
+      return;
+    }
+
+    if (this.isHost) {
+      // A grid progress star is earned after every star currently shown is collected.
+      this._awardLayoutClearStar();
     }
   }
 
@@ -390,55 +448,311 @@ class FishGame {
    * Sets all currently-active star cells to null in Firebase.
    */
   _clearAllStarsInFirebase() {
+    const activeKeys = [];
+
     for (const [key, exists] of this._starStates) {
       if (exists) {
-        SquidlyAPI.firebaseSet(`stars/${key}`, null);
+        activeKeys.push(key);
       }
     }
+
+    if (activeKeys.length > 0) {
+      this._suppressNextLayoutClearProgress = true;
+    }
+
+    activeKeys.forEach((key) => {
+      SquidlyAPI.firebaseSet(`stars/${key}`, null);
+    });
   }
 
   // ==========================================================================
   // LOGIC & ACTIONS
   // ==========================================================================
 
+  _isLayoutComplete() {
+    return this._gameService.isLayoutComplete(
+      this.layoutStarsEarned,
+      this.layoutStarsRequired,
+    );
+  }
+
+  _canIncreaseGrid() {
+    return this._gameService.canIncreaseGrid(
+      this.layoutStarsEarned,
+      this.gridSize,
+      this.layoutStarsRequired,
+    );
+  }
+
+  _syncLayoutProgressUI() {
+    this._ui.updateLayoutProgress(
+      this.layoutStarsEarned,
+      this.layoutStarsRequired,
+      this._canIncreaseGrid(),
+    );
+  }
+
+  _setLayoutProgress(value, { syncFirebase = true } = {}) {
+    this.layoutStarsEarned = this._gameService.normalizeLayoutProgress(
+      value,
+      this.layoutStarsRequired,
+    );
+
+    if (syncFirebase) {
+      SquidlyAPI.firebaseSet("layoutStarsEarned", this.layoutStarsEarned);
+    }
+
+    this._syncLayoutProgressUI();
+  }
+
+  _resetLayoutProgress() {
+    this._setLayoutProgress(0);
+  }
+
+  _prepareGridSizeChange() {
+    this._resetPendingStarSelection();
+
+    if (this.isHost) {
+      this._clearAllStarsInFirebase();
+      this._resetLayoutProgress();
+    }
+
+    this._layoutHadStars = false;
+  }
+
+  _advanceGrid() {
+    if (!this._canIncreaseGrid()) return;
+
+    const newSize = this._gameService.getNextGridSize(this.gridSize);
+    if (newSize !== this.gridSize) {
+      this._resetLayoutProgress();
+      SquidlyAPI.firebaseSet("gridSize", newSize);
+    }
+  }
+
+  _shouldGenerateSinglePlayerStars(stars = this.firebaseStars) {
+    return this._gameService.shouldGenerateSinglePlayerStars({
+      isHost: this.isHost,
+      progress: this.layoutStarsEarned,
+      stars,
+      isMultiplayerMode: this.isMultiplayerMode,
+      requiredClears: this.layoutStarsRequired,
+    });
+  }
+
+  _scheduleSinglePlayerStarGeneration(
+    delay = GAME_RULES.STARTUP_RETRY_DELAY_MS,
+    stars = this.firebaseStars,
+  ) {
+    if (!this._shouldGenerateSinglePlayerStars(stars)) return;
+
+    setTimeout(() => {
+      if (this._shouldGenerateSinglePlayerStars()) {
+        this._generateRandomStarsToFirebase();
+      }
+    }, delay);
+  }
+
+  _awardLayoutClearStar() {
+    if (this._isLayoutComplete()) return;
+
+    const newProgress = this._gameService.getNextLayoutProgress(
+      this.layoutStarsEarned,
+      this.layoutStarsRequired,
+    );
+
+    this._setLayoutProgress(newProgress);
+
+    console.log(
+      `[FishGame] Grid clear complete: ${newProgress}/${this.layoutStarsRequired}`,
+    );
+  }
+
   _setGameMode(mode) {
     const result = this._gameService.setGameMode(mode, this.isMultiplayerMode);
-    if (!result.changed) return;
+    if (!result.changed) {
+      this._handleUnchangedGameMode();
+      return;
+    }
 
+    this._applyGameModeState(mode, result);
+    this._runGameModeSideEffects(result);
+    this._syncRendererGameMode(result.isMultiplayer);
+    this._updateSwapButton();
+    this._updateSetStarsButton();
+  }
+
+  _handleUnchangedGameMode() {
+    this._scheduleSinglePlayerStarGeneration();
+  }
+
+  _applyGameModeState(mode, result) {
     this.isMultiplayerMode = result.isMultiplayer;
     this._gameService.isMultiplayerMode = result.isMultiplayer;
     console.log("[FishGame] Mode set to:", mode);
+  }
 
+  _runGameModeSideEffects(result) {
     if (result.shouldClearStars) {
-      // Multiplayer: Clear stars
-      this._clearAllStarsInFirebase();
-      this._updateStarGridUI();
+      this._enterMultiplayerMode();
     } else if (result.shouldGenerateStars) {
-      // Single Player: Reset swap, hide grid, generate stars
-      if (this._isSwapped) {
-        SquidlyAPI.firebaseSet("isSwapped", false);
-        // Optimistic update for immediate logic
-        this._isSwapped = false;
-        if (this.currentCursor) this.currentCursor.setIsHost(this.isHost);
-      }
-
-      this._updateStarGridUI();
-      if (this.isHost) {
-        this._generateRandomStarsToFirebase();
-      }
+      this._enterSinglePlayerMode();
     }
+  }
 
+  _enterMultiplayerMode() {
+    this._resetPendingStarSelection();
+    this._clearAllStarsInFirebase();
+    this._updateStarGridUI();
+  }
+
+  _enterSinglePlayerMode() {
+    this._resetIdentitySwap();
+    this._resetPendingStarSelection();
+    this._updateStarGridUI();
+    this._scheduleSinglePlayerStarGeneration();
+  }
+
+  _resetIdentitySwap() {
+    if (!this._isSwapped) return;
+
+    SquidlyAPI.firebaseSet("isSwapped", false);
+    this._isSwapped = false;
+    if (this.currentCursor) this.currentCursor.setIsHost(this.isHost);
+  }
+
+  _syncRendererGameMode(isMultiplayer) {
     if (this.currentCursor && this.currentCursor.setMultiplayerMode) {
-      this.currentCursor.setMultiplayerMode(result.isMultiplayer);
+      this.currentCursor.setMultiplayerMode(isMultiplayer);
     }
-
-    this._updateSwapButton();
   }
 
   _updateSwapButton() {
     this._ui.updateSwapButton(this.isMultiplayerMode, () => {
       this._toggleIdentitySwap();
     });
+  }
+
+  _updateSetStarsButton() {
+    if (this._setStarsButtonKey) {
+      SquidlyAPI.removeIcon(this._setStarsButtonKey);
+      this._setStarsButtonKey = null;
+    }
+
+    if (!this.isMultiplayerMode || !this.isHost) return;
+
+    this._setStarsButtonKey = SquidlyAPI.setIcon(
+      2,
+      0,
+      {
+        symbol: "tick",
+        displayValue: "Set Stars",
+        type: "action",
+      },
+      () => this._setStagedStars(),
+    );
+  }
+
+  _resetPendingStarSelection() {
+    this._pendingStarStates = null;
+  }
+
+  _createPendingStarStateFromFirebase() {
+    const pending = new Map();
+
+    this.firebaseStars.forEach((star) => {
+      pending.set(`${star.row}_${star.col}`, {
+        offsetX: typeof star.offsetX === "number" ? star.offsetX : 0,
+        offsetY: typeof star.offsetY === "number" ? star.offsetY : 0,
+      });
+    });
+
+    return pending;
+  }
+
+  _getPendingStarStates() {
+    if (!this._pendingStarStates) {
+      this._pendingStarStates = this._createPendingStarStateFromFirebase();
+    }
+
+    return this._pendingStarStates;
+  }
+
+  _starsFromPendingState(pendingStates) {
+    const stars = [];
+
+    for (const [key, offset] of pendingStates) {
+      const [row, col] = key.split("_").map(Number);
+      stars.push({
+        id: this._gameService.createStarId(row, col),
+        row,
+        col,
+        offsetX: typeof offset.offsetX === "number" ? offset.offsetX : 0,
+        offsetY: typeof offset.offsetY === "number" ? offset.offsetY : 0,
+      });
+    }
+
+    return stars;
+  }
+
+  _getStarGridDisplayStars() {
+    if (!this._pendingStarStates) return this.firebaseStars;
+    return this._starsFromPendingState(this._pendingStarStates);
+  }
+
+  _setStagedStars() {
+    if (!this.isMultiplayerMode || !this.isHost) return;
+
+    const pendingStates =
+      this._pendingStarStates ?? this._createPendingStarStateFromFirebase();
+    const stars = this._starsFromPendingState(pendingStates);
+
+    const targetKeys = new Set(stars.map((star) => `${star.row}_${star.col}`));
+    const currentKeys = new Set(
+      this.firebaseStars.map((star) => `${star.row}_${star.col}`),
+    );
+    const isRecommittingSameVisibleStars =
+      stars.length === this.firebaseStars.length &&
+      stars.every((star) => currentKeys.has(`${star.row}_${star.col}`));
+
+    const keysToClear = [];
+    for (const [key, exists] of this._starStates) {
+      if (exists && !targetKeys.has(key)) {
+        keysToClear.push(key);
+      }
+    }
+
+    if (!isRecommittingSameVisibleStars) {
+      this._layoutHadStars = false;
+    }
+
+    this._activeStarClearKeys = new Set(keysToClear);
+    if (
+      keysToClear.length > 0 &&
+      keysToClear.length === this.firebaseStars.length
+    ) {
+      this._suppressNextLayoutClearProgress = true;
+    }
+
+    keysToClear.forEach((key) => {
+      SquidlyAPI.firebaseSet(`stars/${key}`, null);
+    });
+
+    stars.forEach((star) => {
+      SquidlyAPI.firebaseSet(
+        `stars/${star.row}_${star.col}`,
+        this._encodeStarOffset(star),
+      );
+    });
+
+    this._pendingStarStates = null;
+    this._updateStarGridUI();
+
+    console.log(
+      `[FishGame] Set ${stars.length} multiplayer star${
+        stars.length === 1 ? "" : "s"
+      }. Collect all visible stars to earn one grid progress star.`,
+    );
   }
 
   _toggleIdentitySwap() {
@@ -456,7 +770,7 @@ class FishGame {
     this._ui.updateStarControlGrid(
       shouldShow,
       this.gridSize,
-      this.firebaseStars,
+      this._getStarGridDisplayStars(),
       (row, col) => this._onStarCellClick(row, col),
     );
   }
@@ -470,14 +784,18 @@ class FishGame {
   }
 
   _onStarCellClick(row, col) {
+    if (!this.isMultiplayerMode || !this.isHost) return;
+
     const key = `${row}_${col}`;
-    const currentlyExists = this._starStates.get(key) || false;
-    SquidlyAPI.firebaseSet(
-      `stars/${key}`,
-      currentlyExists
-        ? null
-        : this._encodeStarOffset(this._createRandomStarOffset()),
-    );
+    const pendingStates = this._getPendingStarStates();
+
+    if (pendingStates.has(key)) {
+      pendingStates.delete(key);
+    } else {
+      pendingStates.set(key, this._createRandomStarOffset());
+    }
+
+    this._ui.updateStarCellStates(this._getStarGridDisplayStars());
   }
 
   _generateRandomStarsToFirebase() {

@@ -26,6 +26,19 @@
  *
  * @class
  */
+export const GAME_MODES = Object.freeze({
+  SINGLE_PLAYER: "single-player",
+  MULTIPLAYER: "multiplayer",
+});
+
+export const GAME_RULES = Object.freeze({
+  GRID_MIN_SIZE: 1,
+  GRID_MAX_SIZE: 4,
+  REQUIRED_LAYOUT_CLEARS: 3,
+  STAR_REGEN_DELAY_MS: 500,
+  STARTUP_RETRY_DELAY_MS: 100,
+});
+
 class GameService {
   /**
    * Creates a new GameService instance
@@ -33,7 +46,7 @@ class GameService {
    * @constructor
    * @param {Object} [initialState={}] - Initial game state
    * @param {number} [initialState.score=0] - Starting score
-   * @param {number} [initialState.gridSize=4] - Grid dimension (1-4)
+   * @param {number} [initialState.gridSize=1] - Grid dimension (1-4)
    * @param {boolean} [initialState.isMultiplayerMode=false] - Game mode
    * @param {Array} [initialState.stars=[]] - Initial stars array
    */
@@ -48,7 +61,9 @@ class GameService {
      * Grid dimension (1-4)
      * @type {number}
      */
-    this.gridSize = this.validateGridSize(initialState.gridSize ?? 4);
+    this.gridSize = this.validateGridSize(
+      initialState.gridSize ?? GAME_RULES.GRID_MIN_SIZE,
+    );
 
     /**
      * Whether multiplayer mode is active
@@ -71,8 +86,11 @@ class GameService {
    */
   validateGridSize(size) {
     const n = Number(size);
-    if (!Number.isFinite(n)) return 4;
-    return Math.max(1, Math.min(4, Math.round(n)));
+    if (!Number.isFinite(n)) return GAME_RULES.GRID_MIN_SIZE;
+    return Math.max(
+      GAME_RULES.GRID_MIN_SIZE,
+      Math.min(GAME_RULES.GRID_MAX_SIZE, Math.round(n)),
+    );
   }
 
   /**
@@ -236,6 +254,113 @@ class GameService {
   }
 
   /**
+   * Normalizes layout-clear progress to the valid range.
+   *
+   * @param {number} progress - Raw progress value
+   * @param {number} [requiredClears=GAME_RULES.REQUIRED_LAYOUT_CLEARS] - Clears required to complete the layout
+   * @returns {number} Normalized progress value
+   */
+  normalizeLayoutProgress(
+    progress,
+    requiredClears = GAME_RULES.REQUIRED_LAYOUT_CLEARS,
+  ) {
+    const parsedRequired = Number(requiredClears);
+    const safeRequired =
+      Number.isFinite(parsedRequired) && parsedRequired > 0
+        ? Math.round(parsedRequired)
+        : GAME_RULES.REQUIRED_LAYOUT_CLEARS;
+
+    const parsedProgress = Number(progress);
+    if (!Number.isFinite(parsedProgress) || parsedProgress < 0) return 0;
+
+    return Math.min(safeRequired, Math.round(parsedProgress));
+  }
+
+  /**
+   * Determines whether the current grid layout has been completed.
+   *
+   * @param {number} progress - Current layout-clear progress
+   * @param {number} [requiredClears=GAME_RULES.REQUIRED_LAYOUT_CLEARS] - Clears required to complete the layout
+   * @returns {boolean} True when enough clears have been earned
+   */
+  isLayoutComplete(
+    progress,
+    requiredClears = GAME_RULES.REQUIRED_LAYOUT_CLEARS,
+  ) {
+    return (
+      this.normalizeLayoutProgress(progress, requiredClears) >= requiredClears
+    );
+  }
+
+  /**
+   * Calculates the next layout-clear progress value after a cleared layout.
+   *
+   * @param {number} progress - Current layout-clear progress
+   * @param {number} [requiredClears=GAME_RULES.REQUIRED_LAYOUT_CLEARS] - Clears required to complete the layout
+   * @returns {number} Updated progress value
+   */
+  getNextLayoutProgress(
+    progress,
+    requiredClears = GAME_RULES.REQUIRED_LAYOUT_CLEARS,
+  ) {
+    return this.normalizeLayoutProgress(progress + 1, requiredClears);
+  }
+
+  /**
+   * Determines whether the player can advance to the next grid size.
+   *
+   * @param {number} progress - Current layout-clear progress
+   * @param {number} gridSize - Current grid size
+   * @param {number} [requiredClears=GAME_RULES.REQUIRED_LAYOUT_CLEARS] - Clears required to complete the layout
+   * @returns {boolean} True when the layout is complete and a larger grid exists
+   */
+  canIncreaseGrid(
+    progress,
+    gridSize,
+    requiredClears = GAME_RULES.REQUIRED_LAYOUT_CLEARS,
+  ) {
+    return (
+      this.isLayoutComplete(progress, requiredClears) &&
+      this.validateGridSize(gridSize) < GAME_RULES.GRID_MAX_SIZE
+    );
+  }
+
+  /**
+   * Gets the next grid size, clamped to the configured maximum.
+   *
+   * @param {number} gridSize - Current grid size
+   * @returns {number} Next grid size
+   */
+  getNextGridSize(gridSize) {
+    return this.validateGridSize(this.validateGridSize(gridSize) + 1);
+  }
+
+  /**
+   * Determines whether automatic single-player star generation should run.
+   *
+   * @param {Object} state - Current game state
+   * @param {boolean} state.isHost - Whether this client is host
+   * @param {number} state.progress - Current layout-clear progress
+   * @param {Array} state.stars - Current stars array
+   * @param {boolean} state.isMultiplayerMode - Whether multiplayer mode is active
+   * @param {number} [state.requiredClears=GAME_RULES.REQUIRED_LAYOUT_CLEARS] - Clears required to complete the layout
+   * @returns {boolean} True when stars should be generated automatically
+   */
+  shouldGenerateSinglePlayerStars({
+    isHost,
+    progress,
+    stars,
+    isMultiplayerMode,
+    requiredClears = GAME_RULES.REQUIRED_LAYOUT_CLEARS,
+  }) {
+    return (
+      isHost === true &&
+      !this.isLayoutComplete(progress, requiredClears) &&
+      this.shouldRegenerateStars(stars, isMultiplayerMode)
+    );
+  }
+
+  /**
    * Sets the game mode and returns actions to take
    *
    * Pure logic for mode switching - returns what should happen,
@@ -249,7 +374,7 @@ class GameService {
    * @returns {boolean} result.shouldGenerateStars - Whether to generate new stars
    */
   setGameMode(mode, currentIsMultiplayer) {
-    const isMultiplayer = mode === "multiplayer";
+    const isMultiplayer = mode === GAME_MODES.MULTIPLAYER;
 
     // Skip if no change
     if (currentIsMultiplayer === isMultiplayer) {
