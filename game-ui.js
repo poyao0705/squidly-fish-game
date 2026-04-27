@@ -215,7 +215,7 @@ export class GameUI {
         symbol: this._canIncreaseGrid
           ? "add"
           : isCompletedWithoutNextGrid
-            ? "check"
+            ? "tick"
             : "tools-unlocked",
         displayValue: this._canIncreaseGrid
           ? "Increase Grid"

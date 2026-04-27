@@ -645,7 +645,7 @@ class FishGame {
       2,
       0,
       {
-        symbol: "tick",
+        symbol: "edit",
         displayValue: "Set Stars",
         type: "action",
       },
