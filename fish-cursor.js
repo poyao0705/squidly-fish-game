@@ -1176,10 +1176,12 @@ class WebGLFishCursor {
    *
    * @param {number} row - Grid row (0 = top)
    * @param {number} col - Grid column (0 = left, after UI)
-   * @returns {THREE.Vector3} World position for cell center
+   * @param {number} [offsetX=0] - Saved random horizontal offset within the cell
+   * @param {number} [offsetY=0] - Saved random vertical offset within the cell
+   * @returns {THREE.Vector3} World position inside the cell
    * @private
    */
-  _gridCellToWorld(row, col) {
+  _gridCellToWorld(row, col, offsetX = 0, offsetY = 0) {
     const n = this._getStarGridSize();
 
     if (!this._viewBoundsX || !this._viewBoundsY) {
@@ -1203,9 +1205,14 @@ class WebGLFishCursor {
     const top = this._viewBoundsY - padY;
     const bottom = -this._viewBoundsY + padY;
 
-    // Map cell to normalized coordinates (0-1), centered in cell
-    const u = (col + 0.5) / n;
-    const v = (row + 0.5) / n;
+    // Map cell to normalized coordinates (0-1), centered in cell,
+    // then apply saved per-cell offsets. Offsets are normalized to cell size.
+    const safeOffsetX =
+      typeof offsetX === "number" && isFinite(offsetX) ? offsetX : 0;
+    const safeOffsetY =
+      typeof offsetY === "number" && isFinite(offsetY) ? offsetY : 0;
+    const u = (col + 0.5 + safeOffsetX) / n;
+    const v = (row + 0.5 + safeOffsetY) / n;
 
     // Map to world coordinates
     const x = left + (right - left) * u;
@@ -1433,13 +1440,18 @@ class WebGLFishCursor {
    * - Spin speed (rotation rate)
    * - Phase offset (so stars don't animate in sync)
    *
-   * @param {Object} cell - Grid cell { row, col }
+   * @param {Object} cell - Grid cell { row, col, offsetX, offsetY }
    * @param {string} id - Unique identifier for this star (from Firebase)
    * @private
    */
   _spawnStarAtCell(cell, id) {
     const mesh = this._createStarMesh();
-    const basePosition = this._gridCellToWorld(cell.row, cell.col);
+    const basePosition = this._gridCellToWorld(
+      cell.row,
+      cell.col,
+      cell.offsetX,
+      cell.offsetY,
+    );
 
     // Randomize animation parameters
     const radius = this._randBetween(0.1, this.config.STAR_FLOAT_RADIUS);
@@ -1483,7 +1495,7 @@ class WebGLFishCursor {
    * Called whenever Firebase star data changes (from host placing stars
    * or from a star being collected).
    *
-   * @param {Array<{id: string, row: number, col: number}>} firebaseStars - Star data from Firebase
+   * @param {Array<{id: string, row: number, col: number, offsetX?: number, offsetY?: number}>} firebaseStars - Star data from Firebase
    * @public
    */
   syncStarsFromFirebase(firebaseStars) {
@@ -1512,7 +1524,12 @@ class WebGLFishCursor {
     firebaseStars.forEach((starData) => {
       if (!currentIds.has(starData.id)) {
         this._spawnStarAtCell(
-          { row: starData.row, col: starData.col },
+          {
+            row: starData.row,
+            col: starData.col,
+            offsetX: starData.offsetX,
+            offsetY: starData.offsetY,
+          },
           starData.id,
         );
       }
@@ -1532,7 +1549,12 @@ class WebGLFishCursor {
     if (!this.stars.length) return;
     this.stars.forEach((star) => {
       star.basePosition.copy(
-        this._gridCellToWorld(star.cell.row, star.cell.col),
+        this._gridCellToWorld(
+          star.cell.row,
+          star.cell.col,
+          star.cell.offsetX,
+          star.cell.offsetY,
+        ),
       );
     });
   }

@@ -58,7 +58,7 @@ class GameService {
 
     /**
      * Current stars array
-     * @type {Array<{id: string, row: number, col: number}>}
+     * @type {Array<{id: string, row: number, col: number, offsetX?: number, offsetY?: number}>}
      */
     this.stars = initialState.stars ?? [];
   }
@@ -101,12 +101,29 @@ class GameService {
   }
 
   /**
+   * Creates a random normalized offset within a grid cell.
+   *
+   * Values are centered around 0 so renderers can convert them into local
+   * cell-space offsets. Keeping the range within ±0.35 leaves some padding
+   * from cell edges.
+   *
+   * @returns {{offsetX: number, offsetY: number}} Random offset values
+   */
+  createRandomGridOffset() {
+    const range = 0.7;
+    return {
+      offsetX: (Math.random() - 0.5) * range,
+      offsetY: (Math.random() - 0.5) * range,
+    };
+  }
+
+  /**
    * Generates random star positions using Fisher-Yates shuffle algorithm
    *
    * Pure function that generates stars without side effects.
    *
    * @param {number} gridSize - Grid dimension (1-4)
-   * @returns {Array<{id: string, row: number, col: number}>} Array of star objects
+   * @returns {Array<{id: string, row: number, col: number, offsetX: number, offsetY: number}>} Array of star objects
    */
   generateRandomStars(gridSize) {
     const validSize = this.validateGridSize(gridSize);
@@ -133,6 +150,7 @@ class GameService {
       id: this.createStarId(cell.row, cell.col),
       row: cell.row,
       col: cell.col,
+      ...this.createRandomGridOffset(),
     }));
 
     return stars;
@@ -176,7 +194,7 @@ class GameService {
    *
    * @param {number} row - Grid row (0-indexed)
    * @param {number} col - Grid column (0-indexed)
-   * @returns {Array<{id: string, row: number, col: number}>} Updated stars array
+   * @returns {Array<{id: string, row: number, col: number, offsetX?: number, offsetY?: number}>} Updated stars array
    */
   toggleStarAtPosition(row, col) {
     const existingIndex = this.stars.findIndex(
@@ -195,6 +213,7 @@ class GameService {
         id: this.createStarId(row, col),
         row: row,
         col: col,
+        ...this.createRandomGridOffset(),
       };
       const newStars = [...this.stars, newStar];
       this.stars = newStars;
@@ -275,7 +294,7 @@ class GameService {
   /**
    * Sets the stars array (for syncing from external source)
    *
-   * @param {Array<{id: string, row: number, col: number}>} stars - Stars array
+   * @param {Array<{id: string, row: number, col: number, offsetX?: number, offsetY?: number}>} stars - Stars array
    */
   setStars(stars) {
     this.stars = Array.isArray(stars) ? stars : [];

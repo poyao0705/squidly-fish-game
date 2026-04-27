@@ -311,8 +311,31 @@ class FishGame {
     if (row >= this.gridSize || col >= this.gridSize) return;
 
     const key = `${row}_${col}`;
-    this._starStates.set(key, value === true);
+    this._starStates.set(key, this._parseStarCellValue(value));
     this._rebuildFirebaseStars();
+  }
+
+  _parseStarCellValue(value) {
+    if (value === true) {
+      return { offsetX: 0, offsetY: 0 };
+    }
+
+    if (typeof value === "string") {
+      const [offsetX, offsetY] = value.split(",").map(Number);
+      if (Number.isFinite(offsetX) && Number.isFinite(offsetY)) {
+        return { offsetX, offsetY };
+      }
+    }
+
+    if (value && typeof value === "object") {
+      const { offsetX, offsetY } = value;
+      return {
+        offsetX: typeof offsetX === "number" ? offsetX : 0,
+        offsetY: typeof offsetY === "number" ? offsetY : 0,
+      };
+    }
+
+    return null;
   }
 
   /**
@@ -321,13 +344,15 @@ class FishGame {
    */
   _rebuildFirebaseStars() {
     const stars = [];
-    for (const [key, exists] of this._starStates) {
-      if (exists) {
+    for (const [key, starData] of this._starStates) {
+      if (starData) {
         const [row, col] = key.split("_").map(Number);
         stars.push({
           id: this._gameService.createStarId(row, col),
           row,
           col,
+          offsetX: typeof starData.offsetX === "number" ? starData.offsetX : 0,
+          offsetY: typeof starData.offsetY === "number" ? starData.offsetY : 0,
         });
       }
     }
@@ -436,10 +461,23 @@ class FishGame {
     );
   }
 
+  _createRandomStarOffset() {
+    return this._gameService.createRandomGridOffset();
+  }
+
+  _encodeStarOffset(offset) {
+    return `${offset.offsetX},${offset.offsetY}`;
+  }
+
   _onStarCellClick(row, col) {
     const key = `${row}_${col}`;
     const currentlyExists = this._starStates.get(key) || false;
-    SquidlyAPI.firebaseSet(`stars/${key}`, currentlyExists ? null : true);
+    SquidlyAPI.firebaseSet(
+      `stars/${key}`,
+      currentlyExists
+        ? null
+        : this._encodeStarOffset(this._createRandomStarOffset()),
+    );
   }
 
   _generateRandomStarsToFirebase() {
@@ -451,7 +489,21 @@ class FishGame {
     // Generate new random stars and set each individually
     const stars = this._gameService.generateRandomStars(this.gridSize);
     stars.forEach((star) => {
-      SquidlyAPI.firebaseSet(`stars/${star.row}_${star.col}`, true);
+      const fallbackOffset = this._createRandomStarOffset();
+      const offset = {
+        offsetX:
+          typeof star.offsetX === "number"
+            ? star.offsetX
+            : fallbackOffset.offsetX,
+        offsetY:
+          typeof star.offsetY === "number"
+            ? star.offsetY
+            : fallbackOffset.offsetY,
+      };
+      SquidlyAPI.firebaseSet(
+        `stars/${star.row}_${star.col}`,
+        this._encodeStarOffset(offset),
+      );
     });
   }
 
