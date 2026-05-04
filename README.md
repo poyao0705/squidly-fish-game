@@ -28,7 +28,7 @@ Key roles:
 4. Firebase subscriptions attach for:
    - `gridSize`, `score`, `gameMode`, `stars`.
 5. UI creation:
-   - Score overlay is injected into the DOM.
+   - Grid progress HUD is injected into the DOM.
    - Multiplayer grid UI is created if the mode requires it.
 
 ### Firebase Data Model
@@ -133,7 +133,7 @@ The WebGL loop in `fish-cursor.js` runs every animation frame:
 8. Render the scene.
 
 ### UI Elements and Controls
-- Score display: A fixed overlay created in `app.js`.
+- Grid progress HUD: A fixed overlay created in `game-ui.js`.
 - Star control grid: A host-only grid for staging star placement in multiplayer
   mode. Clicking grid cells updates the staged selection only.
   Styles live in `style.css` under `.star-control-grid` and `.star-control-cell`.

@@ -87,7 +87,7 @@ class FishGame {
     this._setupSidebarIcons();
 
     // Initialize UI components
-    this._ui.init(this.score);
+    this._ui.init();
     this._syncLayoutProgressUI();
     await this._initVolume();
     this._initBackgroundMusic();
@@ -268,7 +268,6 @@ class FishGame {
       if (Number.isFinite(score) && score >= 0) {
         this._gameService.setScore(score);
         this.score = score;
-        this._ui.updateScore(score);
       }
     });
 
@@ -829,7 +828,6 @@ class FishGame {
     const newScore = this._gameService.incrementScore();
     this.score = newScore;
     SquidlyAPI.firebaseSet("score", newScore);
-    this._ui.updateScore(newScore);
   }
 
   onStarCollected(starId) {
@@ -852,7 +850,6 @@ class FishGame {
     const newScore = this._gameService.incrementScore();
     this.score = newScore;
     SquidlyAPI.firebaseSet("score", newScore);
-    this._ui.updateScore(newScore);
 
     console.log(`[FishGame] Star collected: ${starId}`);
   }

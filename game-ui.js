@@ -2,14 +2,12 @@
  * @fileoverview Game UI Manager
  *
  * Manages all DOM-related UI elements for the Fish Game:
- * - Score display
  * - Sidebar icons
  * - Star control grid
  */
 
 export class GameUI {
   constructor() {
-    this._scoreElement = null;
     this._hudElement = null;
     this._layoutStarsElement = null;
     this._layoutProgressTextElement = null;
@@ -25,21 +23,10 @@ export class GameUI {
   }
 
   /**
-   * Initialize static UI elements like score.
-   * @param {number} initialScore
+   * Initialize static UI elements.
    */
-  init(initialScore = 0) {
-    this._createTopHud(initialScore);
-  }
-
-  /**
-   * Updates the displayed score.
-   * @param {number} score
-   */
-  updateScore(score) {
-    if (this._scoreElement) {
-      this._scoreElement.textContent = score;
-    }
+  init() {
+    this._createTopHud();
   }
 
   /**
@@ -216,13 +203,14 @@ export class GameUI {
           ? "add"
           : isCompletedWithoutNextGrid
             ? "tick"
-            : "tools-unlocked",
+            : "lock",
         displayValue: this._canIncreaseGrid
-          ? "Increase Grid"
+          ? "Next Level"
           : isCompletedWithoutNextGrid
             ? "Grid Complete"
-            : `Clear all stars ${this._layoutStarsRequired} times to unlock`,
+            : `Next Level`,
         type: "action",
+        disabled: !this._canIncreaseGrid,
       },
       () => {
         if (!this._canIncreaseGrid || !this._onGridIncrease) return;
@@ -253,26 +241,11 @@ export class GameUI {
       : `${this._layoutStarsEarned}/${this._layoutStarsRequired} clears`;
   }
 
-  _createTopHud(initialScore) {
+  _createTopHud() {
     if (this._hudElement) return;
 
     const container = document.createElement("div");
     container.id = "top-hud";
-
-    const scoreSection = document.createElement("div");
-    scoreSection.className = "hud-section score-section";
-
-    const scoreLabel = document.createElement("span");
-    scoreLabel.className = "hud-label";
-    scoreLabel.textContent = "Score";
-
-    const scoreIcon = document.createElement("span");
-    scoreIcon.className = "score-icon";
-    scoreIcon.textContent = "\u2B50";
-
-    this._scoreElement = document.createElement("span");
-    this._scoreElement.className = "score-value";
-    this._scoreElement.textContent = initialScore;
 
     const progressSection = document.createElement("div");
     progressSection.className = "hud-section layout-progress-section";
@@ -287,15 +260,10 @@ export class GameUI {
     this._layoutProgressTextElement = document.createElement("span");
     this._layoutProgressTextElement.className = "hud-progress-text";
 
-    scoreSection.appendChild(scoreLabel);
-    scoreSection.appendChild(scoreIcon);
-    scoreSection.appendChild(this._scoreElement);
-
     progressSection.appendChild(progressLabel);
     progressSection.appendChild(this._layoutStarsElement);
     progressSection.appendChild(this._layoutProgressTextElement);
 
-    container.appendChild(scoreSection);
     container.appendChild(progressSection);
     document.body.appendChild(container);
 
