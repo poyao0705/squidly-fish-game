@@ -1,0 +1,14 @@
+{
+  "audio": {
+    "backgroundMusicSrc": "./fish_bgm.mp3",
+    "collectStarSfxSrc": "./collect_star_effect.mp3",
+    "preload": "auto",
+    "loopBackgroundMusic": true,
+    "defaultVolume": 1,
+    "volumeScale": 0.2,
+    "unlockEvents": ["pointerdown", "keydown"]
+  },
+  "state": {
+    "initialScore": 0
+  }
+}

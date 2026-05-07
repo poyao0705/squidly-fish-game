@@ -98,6 +98,9 @@ export const DEFAULT_CONFIG = {
   STAR_SPIN_SPEED_MIN: 0.3, // Min rotation speed
   STAR_SPIN_SPEED_MAX: 1.1, // Max rotation speed
   STAR_COLORS: ["#ffea00", "#ffd54a", "#ffcc2a", "#fff3a0"], // Gold/yellow palette
+
+  // === Input ===
+  INPUT_INACTIVE_TIMEOUT_MS: 5000, // Timeout before a pointer is considered inactive
 };
 
 /**

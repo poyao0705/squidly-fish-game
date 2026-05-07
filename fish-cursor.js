@@ -134,20 +134,20 @@ class WebGLFishCursor {
     this.fish = null;
 
     /**
-     * Manages pointer input from multiple sources (host, participant).
-     * Tracks position and activity state for each pointer.
-     */
-    this.inputManager = new InputManager(this, {
-      inactiveTimeout: 5000,
-    });
-
-    /**
      * Configuration object - merges defaults with provided overrides.
      * Controls visual appearance, animation parameters, and game settings.
      *
      * @see {@link module:FishCursorConfig} for all available configuration options.
      */
     this.config = createConfig(configOverrides);
+
+    /**
+     * Manages pointer input from multiple sources (host, participant).
+     * Tracks position and activity state for each pointer.
+     */
+    this.inputManager = new InputManager(this, {
+      inactiveTimeout: this.config.INPUT_INACTIVE_TIMEOUT_MS,
+    });
 
     // Particle system
     this.flyingParticles = [];

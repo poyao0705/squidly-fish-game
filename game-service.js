@@ -37,7 +37,12 @@ export const GAME_RULES = Object.freeze({
   REQUIRED_LAYOUT_CLEARS: 3,
   STAR_REGEN_DELAY_MS: 500,
   STARTUP_RETRY_DELAY_MS: 100,
+  RANDOM_GRID_OFFSET_RANGE: 0.7,
 });
+
+export function createGameRules(overrides = {}) {
+  return Object.freeze({ ...GAME_RULES, ...overrides });
+}
 
 class GameService {
   /**
@@ -50,7 +55,9 @@ class GameService {
    * @param {boolean} [initialState.isMultiplayerMode=false] - Game mode
    * @param {Array} [initialState.stars=[]] - Initial stars array
    */
-  constructor(initialState = {}) {
+  constructor(initialState = {}, rules = GAME_RULES) {
+    this.rules = createGameRules(rules);
+
     /**
      * Current game score
      * @type {number}
@@ -62,7 +69,7 @@ class GameService {
      * @type {number}
      */
     this.gridSize = this.validateGridSize(
-      initialState.gridSize ?? GAME_RULES.GRID_MIN_SIZE,
+      initialState.gridSize ?? this.rules.GRID_MIN_SIZE,
     );
 
     /**
@@ -86,10 +93,10 @@ class GameService {
    */
   validateGridSize(size) {
     const n = Number(size);
-    if (!Number.isFinite(n)) return GAME_RULES.GRID_MIN_SIZE;
+    if (!Number.isFinite(n)) return this.rules.GRID_MIN_SIZE;
     return Math.max(
-      GAME_RULES.GRID_MIN_SIZE,
-      Math.min(GAME_RULES.GRID_MAX_SIZE, Math.round(n)),
+      this.rules.GRID_MIN_SIZE,
+      Math.min(this.rules.GRID_MAX_SIZE, Math.round(n)),
     );
   }
 
@@ -128,7 +135,7 @@ class GameService {
    * @returns {{offsetX: number, offsetY: number}} Random offset values
    */
   createRandomGridOffset() {
-    const range = 0.7;
+    const range = this.rules.RANDOM_GRID_OFFSET_RANGE;
     return {
       offsetX: (Math.random() - 0.5) * range,
       offsetY: (Math.random() - 0.5) * range,
@@ -262,13 +269,13 @@ class GameService {
    */
   normalizeLayoutProgress(
     progress,
-    requiredClears = GAME_RULES.REQUIRED_LAYOUT_CLEARS,
+    requiredClears = this.rules.REQUIRED_LAYOUT_CLEARS,
   ) {
     const parsedRequired = Number(requiredClears);
     const safeRequired =
       Number.isFinite(parsedRequired) && parsedRequired > 0
         ? Math.round(parsedRequired)
-        : GAME_RULES.REQUIRED_LAYOUT_CLEARS;
+        : this.rules.REQUIRED_LAYOUT_CLEARS;
 
     const parsedProgress = Number(progress);
     if (!Number.isFinite(parsedProgress) || parsedProgress < 0) return 0;
@@ -285,7 +292,7 @@ class GameService {
    */
   isLayoutComplete(
     progress,
-    requiredClears = GAME_RULES.REQUIRED_LAYOUT_CLEARS,
+    requiredClears = this.rules.REQUIRED_LAYOUT_CLEARS,
   ) {
     return (
       this.normalizeLayoutProgress(progress, requiredClears) >= requiredClears
@@ -301,7 +308,7 @@ class GameService {
    */
   getNextLayoutProgress(
     progress,
-    requiredClears = GAME_RULES.REQUIRED_LAYOUT_CLEARS,
+    requiredClears = this.rules.REQUIRED_LAYOUT_CLEARS,
   ) {
     return this.normalizeLayoutProgress(progress + 1, requiredClears);
   }
@@ -317,11 +324,11 @@ class GameService {
   canIncreaseGrid(
     progress,
     gridSize,
-    requiredClears = GAME_RULES.REQUIRED_LAYOUT_CLEARS,
+    requiredClears = this.rules.REQUIRED_LAYOUT_CLEARS,
   ) {
     return (
       this.isLayoutComplete(progress, requiredClears) &&
-      this.validateGridSize(gridSize) < GAME_RULES.GRID_MAX_SIZE
+      this.validateGridSize(gridSize) < this.rules.GRID_MAX_SIZE
     );
   }
 
@@ -351,7 +358,7 @@ class GameService {
     progress,
     stars,
     isMultiplayerMode,
-    requiredClears = GAME_RULES.REQUIRED_LAYOUT_CLEARS,
+    requiredClears = this.rules.REQUIRED_LAYOUT_CLEARS,
   }) {
     return (
       isHost === true &&

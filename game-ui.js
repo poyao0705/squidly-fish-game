@@ -7,7 +7,12 @@
  */
 
 export class GameUI {
-  constructor() {
+  constructor(config = {}) {
+    this.config = {
+      layoutStarsRequiredDefault: 3,
+      ...config,
+    };
+
     this._hudElement = null;
     this._layoutStarsElement = null;
     this._layoutProgressTextElement = null;
@@ -19,7 +24,7 @@ export class GameUI {
     this._canIncreaseGrid = false;
     this._isLayoutComplete = false;
     this._layoutStarsEarned = 0;
-    this._layoutStarsRequired = 3;
+    this._layoutStarsRequired = this.config.layoutStarsRequiredDefault;
   }
 
   /**
@@ -45,12 +50,16 @@ export class GameUI {
    * @param {number} requiredStars - Layout stars required to complete this grid
    * @param {?boolean} canIncreaseGrid - Whether the next grid can be selected
    */
-  updateLayoutProgress(earnedStars, requiredStars = 3, canIncreaseGrid = null) {
+  updateLayoutProgress(
+    earnedStars,
+    requiredStars = this.config.layoutStarsRequiredDefault,
+    canIncreaseGrid = null,
+  ) {
     const parsedRequired = Number(requiredStars);
     const safeRequired =
       Number.isFinite(parsedRequired) && parsedRequired > 0
         ? Math.round(parsedRequired)
-        : 3;
+        : this.config.layoutStarsRequiredDefault;
 
     const parsedEarned = Number(earnedStars);
     this._layoutStarsRequired = safeRequired;

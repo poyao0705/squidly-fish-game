@@ -6,8 +6,33 @@
  */
 
 import { WebGLFishCursor } from "./index.js";
-import GameService, { GAME_MODES, GAME_RULES } from "./game-service.js";
+import GameService, {
+  createGameRules,
+  GAME_MODES,
+  GAME_RULES,
+} from "./game-service.js";
 import { GameUI } from "./game-ui.js";
+import { loadJsonConfig } from "./config-loader.js";
+import { DEFAULT_CONFIG as DEFAULT_FISH_CURSOR_CONFIG } from "./fish-cursor-config.js";
+
+const DEFAULT_APP_CONFIG = Object.freeze({
+  audio: {
+    backgroundMusicSrc: "./fish_bgm.mp3",
+    collectStarSfxSrc: "./collect_star_effect.mp3",
+    preload: "auto",
+    loopBackgroundMusic: true,
+    defaultVolume: 1,
+    volumeScale: 1,
+    unlockEvents: ["pointerdown", "keydown"],
+  },
+  state: {
+    initialScore: 0,
+  },
+});
+
+const DEFAULT_UI_CONFIG = Object.freeze({
+  layoutStarsRequiredDefault: 3,
+});
 
 /**
  * FishGame - Main game controller class
@@ -28,32 +53,30 @@ class FishGame {
 
     console.log("[FishGame] Initialized. Real IsHost:", this._realIsHost);
 
-    // 2. Core Logic Service
+    // 2. Config, services, and UI
     // ------------------------------------------------------------------------
-    this._gameService = new GameService();
+    this._appConfig = DEFAULT_APP_CONFIG;
+    this._gameRules = GAME_RULES;
+    this._fishCursorConfig = DEFAULT_FISH_CURSOR_CONFIG;
+    this._uiConfig = DEFAULT_UI_CONFIG;
+    this._gameService = null;
+    this._ui = null;
 
-    // 3. UI Manager
-    // ------------------------------------------------------------------------
-    this._ui = new GameUI();
-
-    // 4. State
+    // 3. Runtime state
     // ------------------------------------------------------------------------
     this.currentCursor = null;
-    this.gridSize = GAME_RULES.GRID_MIN_SIZE;
-    this.score = 0;
+    this.gridSize = this._gameRules.GRID_MIN_SIZE;
+    this.score = this._appConfig.state.initialScore;
     this.isMultiplayerMode = false;
     this.firebaseStars = [];
     this.layoutStarsEarned = 0;
-    this.layoutStarsRequired = GAME_RULES.REQUIRED_LAYOUT_CLEARS;
+    this.layoutStarsRequired = this._gameRules.REQUIRED_LAYOUT_CLEARS;
     this._layoutHadStars = false;
 
-    // Background music
+    // Audio
     this._bgm = null;
-    this.volume = 1.0;
-
-    // SFX
-    this._collectStarSfx = new Audio("./collect_star_effect.mp3");
-    this._collectStarSfx.preload = "auto";
+    this._collectStarSfx = null;
+    this._unlockBackgroundMusic = null;
 
     // Per-cell star tracking
     this._starStates = new Map(); // "R_C" → boolean
@@ -79,6 +102,9 @@ class FishGame {
   // ==========================================================================
 
   async init() {
+    await this._loadConfig();
+    this._initServices();
+    this._initAudio();
     this._initializeHostDefaults();
     this._initFishCursor();
     this._setupEventListeners();
@@ -91,6 +117,44 @@ class FishGame {
     this._syncLayoutProgressUI();
     await this._initVolume();
     this._initBackgroundMusic();
+  }
+
+  async _loadConfig() {
+    const [appConfig, gameRules, uiConfig, fishCursorConfig] =
+      await Promise.all([
+        loadJsonConfig("./app-config.json", DEFAULT_APP_CONFIG),
+        loadJsonConfig("./game-rules-config.json", GAME_RULES),
+        loadJsonConfig("./game-ui-config.json", DEFAULT_UI_CONFIG),
+        loadJsonConfig("./fish-cursor-config.json", DEFAULT_FISH_CURSOR_CONFIG),
+      ]);
+
+    this._appConfig = appConfig;
+    this._gameRules = createGameRules(gameRules);
+    this._uiConfig = uiConfig;
+    this._fishCursorConfig = fishCursorConfig;
+    this.gridSize = this._gameRules.GRID_MIN_SIZE;
+    this.score = this._appConfig.state.initialScore;
+    this.layoutStarsRequired = this._gameRules.REQUIRED_LAYOUT_CLEARS;
+  }
+
+  _initServices() {
+    this._gameService = new GameService(
+      {
+        score: this.score,
+        gridSize: this.gridSize,
+        isMultiplayerMode: this.isMultiplayerMode,
+        stars: this.firebaseStars,
+      },
+      this._gameRules,
+    );
+    this._ui = new GameUI(this._uiConfig);
+  }
+
+  _initAudio() {
+    const audioConfig = this._appConfig.audio;
+    this._collectStarSfx = new Audio(audioConfig.collectStarSfxSrc);
+    this._collectStarSfx.preload = audioConfig.preload;
+    this._setAudioVolume(audioConfig.defaultVolume);
   }
 
   async _initVolume() {
@@ -109,32 +173,72 @@ class FishGame {
 
   _updateVolume = (value) => {
     const parsed = parseFloat(value) / 100;
-    this.volume = isNaN(parsed) ? 1.0 : Math.min(1.0, Math.max(0.0, parsed));
-    if (this._bgm) this._bgm.volume = this.volume / 2;
-    if (this._collectStarSfx) this._collectStarSfx.volume = this.volume / 2;
+    const userVolume = isNaN(parsed)
+      ? 1.0
+      : Math.min(1.0, Math.max(0.0, parsed));
+    const volume = this._getScaledAudioVolume(userVolume);
+    this._setAudioVolume(volume);
   };
+
+  _getScaledAudioVolume(volume) {
+    const scale = Number(this._appConfig.audio.volumeScale);
+    const safeScale = Number.isFinite(scale) && scale >= 0 ? scale : 1;
+    return Math.min(1.0, Math.max(0.0, volume * safeScale));
+  }
+
+  _setAudioVolume(volume) {
+    if (this._bgm) this._bgm.volume = volume;
+    if (this._collectStarSfx) this._collectStarSfx.volume = volume;
+  }
 
   _initBackgroundMusic() {
     if (this._bgm) return;
 
-    this._bgm = new Audio("./fish_bgm.mp3");
-    this._bgm.loop = true;
-    this._bgm.volume = this.volume;
-    this._bgm.preload = "auto";
+    const audioConfig = this._appConfig.audio;
+    this._bgm = new Audio(audioConfig.backgroundMusicSrc);
+    this._bgm.loop = audioConfig.loopBackgroundMusic;
+    this._bgm.preload = audioConfig.preload;
+    this._bgm.volume = this._collectStarSfx.volume;
 
-    this._playBackgroundMusic();
+    this._playBackgroundMusic({ setupUnlock: true });
   }
 
-  _playBackgroundMusic() {
-    if (!this._bgm) return;
+  _playBackgroundMusic({ setupUnlock = false } = {}) {
+    if (!this._bgm || !this._bgm.paused) return;
 
     this._bgm.play().catch((error) => {
-      console.warn("[FishGame] BGM autoplay failed.", error);
+      if (setupUnlock) {
+        console.warn("[FishGame] BGM autoplay failed.", error);
+        this._setupBackgroundMusicUnlock();
+      }
+    });
+  }
+
+  _setupBackgroundMusicUnlock() {
+    if (this._unlockBackgroundMusic) return;
+
+    this._unlockBackgroundMusic = () => {
+      this._playBackgroundMusic();
+      this._removeBackgroundMusicUnlockListeners();
+      this._unlockBackgroundMusic = null;
+    };
+
+    this._appConfig.audio.unlockEvents.forEach((eventName) => {
+      window.addEventListener(eventName, this._unlockBackgroundMusic, {
+        once: true,
+      });
+    });
+  }
+
+  _removeBackgroundMusicUnlockListeners() {
+    this._appConfig.audio.unlockEvents.forEach((eventName) => {
+      window.removeEventListener(eventName, this._unlockBackgroundMusic);
     });
   }
 
   _initFishCursor() {
     this.currentCursor = new WebGLFishCursor({
+      configOverrides: this._fishCursorConfig,
       isMultiplayerMode: this.isMultiplayerMode,
       isHost: this.isHost,
       onStarCollected: (starId) => this.onStarCollected(starId),
@@ -154,7 +258,7 @@ class FishGame {
       this._initialSessionInfo?.participantActive === true;
 
     const defaults = {
-      gridSize: GAME_RULES.GRID_MIN_SIZE,
+      gridSize: this._gameRules.GRID_MIN_SIZE,
       score: 0,
       gameMode: initialParticipantActive
         ? GAME_MODES.MULTIPLAYER
@@ -386,7 +490,7 @@ class FishGame {
     this._syncStars(stars);
     this._handleLayoutClear(stars, didClearLayout);
     this._scheduleSinglePlayerStarGeneration(
-      GAME_RULES.STAR_REGEN_DELAY_MS,
+      this._gameRules.STAR_REGEN_DELAY_MS,
       stars,
     );
   }
@@ -540,7 +644,7 @@ class FishGame {
   }
 
   _scheduleSinglePlayerStarGeneration(
-    delay = GAME_RULES.STARTUP_RETRY_DELAY_MS,
+    delay = this._gameRules.STARTUP_RETRY_DELAY_MS,
     stars = this.firebaseStars,
   ) {
     if (!this._shouldGenerateSinglePlayerStars(stars)) return;
@@ -858,6 +962,7 @@ class FishGame {
     if (!this.currentCursor || !this.currentCursor.inputManager) return;
     const pointerId = isParticipant ? "participant" : "host";
     this.currentCursor.inputManager.updatePointerPosition(x, y, pointerId);
+    this._playBackgroundMusic();
   }
 }
 
