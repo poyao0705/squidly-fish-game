@@ -1,7 +1,7 @@
 {
   "audio": {
-    "backgroundMusicSrc": "./fish_bgm.mp3",
-    "collectStarSfxSrc": "./collect_star_effect.mp3",
+    "backgroundMusicSrc": "./assets/fish_bgm.mp3",
+    "collectStarSfxSrc": "./assets/collect_star_effect.mp3",
     "preload": "auto",
     "loopBackgroundMusic": true,
     "defaultVolume": 1,

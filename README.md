@@ -5,19 +5,21 @@ A cause effect fish games for Squidly platform
 
 ### Architecture Overview
 The game is a controller-renderer system with Firebase-backed shared state.
-`app.js` owns state orchestration and UI, `game-service.js` contains pure game
-rules, and `fish-cursor.js` renders and simulates the 3D fish scene.
+`src/app.js` owns state orchestration and UI, `src/game-service.js` contains
+pure game rules, and `src/fish-cursor.js` renders and simulates the 3D fish
+scene.
 
 Key roles:
-- `app.js`: State authority, Firebase sync, UI creation, and cursor lifecycle.
-- `game-service.js`: Pure logic for stars, score, grid size, and mode changes.
-- `fish-cursor.js`: WebGL renderer, animation loop, collision detection.
-- `input-manager.js`: Pointer tracking for host/participant inputs.
+- `src/app.js`: State authority, Firebase sync, UI creation, and cursor lifecycle.
+- `src/game-service.js`: Pure logic for stars, score, grid size, and mode changes.
+- `src/fish-cursor.js`: WebGL renderer, animation loop, collision detection.
+- `src/input-manager.js`: Pointer tracking for host/participant inputs.
 - `squidly-apps-api.js`: Platform glue for Firebase + sidebar icons.
-- `fish-cursor-config.js`: Visual tuning and game constants.
+- `src/fish-cursor-config.js`: Built-in fallback visual tuning defaults.
+- `config/*.json`: Runtime tunables loaded during app startup.
 
 ### Initialization Flow (Runtime Boot)
-1. Host-only defaults: `app.js` sets initial Firebase keys if missing
+1. Host-only defaults: `src/app.js` sets initial Firebase keys if missing
    (`gridSize`, `score`, `gameMode`). `gameMode` is derived from participant
    presence automatically. Participants do not write.
 2. Cursor setup: `window.fishGame.init()` creates `WebGLFishCursor`
@@ -64,19 +66,19 @@ Multiplayer:
 - Collision authority is granted only to the participant client when controlling.
 
 Collision authority is critical: only the controlling client is allowed to
-report collisions to `app.js`, which prevents score double-counting.
+report collisions to `src/app.js`, which prevents score double-counting.
 
 ### State and Data Flow
-`app.js` is the central controller and is the only module that writes to
-Firebase in response to gameplay. `fish-cursor.js` never writes to Firebase;
+`src/app.js` is the central controller and is the only module that writes to
+Firebase in response to gameplay. `src/fish-cursor.js` never writes to Firebase;
 it only reports collisions through a callback.
 
 ```mermaid
 flowchart TD
   Input[Inputs]
-  App[app.js]
-  GameService[game-service.js]
-  Cursor[fish-cursor.js]
+  App[src/app.js]
+  GameService[src/game-service.js]
+  Cursor[src/fish-cursor.js]
   Firebase[Firebase]
   UI[DOM_UI]
 
@@ -99,22 +101,22 @@ flowchart TD
      layout first, then presses `Set Stars` to write the staged stars to
      Firebase.
 2. Star sync:
-   - `app.js` receives Firebase star changes and updates `firebaseStars`.
-   - `app.js` calls `currentCursor.syncStarsFromFirebase(...)`.
+   - `src/app.js` receives Firebase star changes and updates `firebaseStars`.
+   - `src/app.js` calls `currentCursor.syncStarsFromFirebase(...)`.
 3. Star animation:
-   - `fish-cursor.js` animates stars with a float + spin effect each frame.
+   - `src/fish-cursor.js` animates stars with a float + spin effect each frame.
 4. Collision:
    - Collision is a distance check between fish and star positions.
    - Only the controlling client calls `onStarCollected`.
 5. Score update and removal:
-   - `app.js` calls `GameService.collectStar`, updates `score`,
+   - `src/app.js` calls `GameService.collectStar`, updates `score`,
      and writes `score` + updated `stars` to Firebase.
 6. Regeneration:
    - In single-player, host auto-regenerates when `stars` becomes empty.
 
 ### Input Arbitration (Who Controls the Fish)
 Input data lands in `InputManager` under pointer IDs: `host` and `participant`.
-`fish-cursor.js` decides who controls the fish each frame:
+`src/fish-cursor.js` decides who controls the fish each frame:
 - Multiplayer: only participant pointer can move the fish.
 - Single-player: participant pointer takes priority, host is fallback.
 
@@ -122,7 +124,7 @@ The controlling client also gains collision authority for that frame, ensuring
 only one client emits `onStarCollected`.
 
 ### Rendering and Simulation Loop
-The WebGL loop in `fish-cursor.js` runs every animation frame:
+The WebGL loop in `src/fish-cursor.js` runs every animation frame:
 1. Compute delta time.
 2. Select active pointer (host/participant) based on mode rules.
 3. Set collision authority flag (`_isControllingFish`).
@@ -133,10 +135,10 @@ The WebGL loop in `fish-cursor.js` runs every animation frame:
 8. Render the scene.
 
 ### UI Elements and Controls
-- Grid progress HUD: A fixed overlay created in `game-ui.js`.
+- Grid progress HUD: A fixed overlay created in `src/game-ui.js`.
 - Star control grid: A host-only grid for staging star placement in multiplayer
   mode. Clicking grid cells updates the staged selection only.
-  Styles live in `style.css` under `.star-control-grid` and `.star-control-cell`.
+  Styles live in `styles/style.css` under `.star-control-grid` and `.star-control-cell`.
 - `Set Stars` sidebar control: shown in multiplayer mode to the player setting
   stars. It commits the staged grid selection to Firebase so the stars appear on
   the play field.
@@ -145,10 +147,11 @@ The WebGL loop in `fish-cursor.js` runs every animation frame:
   toggle is not needed because mode is detected from participant presence.
 
 ### Configuration and Constants
-`fish-cursor-config.js` contains tunables for:
-- Fish appearance and animation (colors, scale, wiggle, smoothing).
-- Particle system settings.
-- Star grid sizing and star visual parameters.
+Runtime config is loaded from `config/`:
+- `config/app.json`: audio paths, volume scale, unlock events, initial app state.
+- `config/game-rules.json`: grid bounds, layout-clear rules, retry delays.
+- `config/game-ui.json`: UI defaults.
+- `config/fish-cursor.json`: fish appearance, animation, particles, stars, input timeout.
 
 ### Optional Modules
 - `sound-engine.js` provides audio engines but is not currently wired into the

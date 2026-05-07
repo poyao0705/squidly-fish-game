@@ -12,13 +12,13 @@ import GameService, {
   GAME_RULES,
 } from "./game-service.js";
 import { GameUI } from "./game-ui.js";
-import { loadJsonConfig } from "./config-loader.js";
+import { loadJsonConfig } from "../config/loader.js";
 import { DEFAULT_CONFIG as DEFAULT_FISH_CURSOR_CONFIG } from "./fish-cursor-config.js";
 
 const DEFAULT_APP_CONFIG = Object.freeze({
   audio: {
-    backgroundMusicSrc: "./fish_bgm.mp3",
-    collectStarSfxSrc: "./collect_star_effect.mp3",
+    backgroundMusicSrc: "./assets/fish_bgm.mp3",
+    collectStarSfxSrc: "./assets/collect_star_effect.mp3",
     preload: "auto",
     loopBackgroundMusic: true,
     defaultVolume: 1,
@@ -122,10 +122,10 @@ class FishGame {
   async _loadConfig() {
     const [appConfig, gameRules, uiConfig, fishCursorConfig] =
       await Promise.all([
-        loadJsonConfig("./app-config.json", DEFAULT_APP_CONFIG),
-        loadJsonConfig("./game-rules-config.json", GAME_RULES),
-        loadJsonConfig("./game-ui-config.json", DEFAULT_UI_CONFIG),
-        loadJsonConfig("./fish-cursor-config.json", DEFAULT_FISH_CURSOR_CONFIG),
+        loadJsonConfig("./config/app.json", DEFAULT_APP_CONFIG),
+        loadJsonConfig("./config/game-rules.json", GAME_RULES),
+        loadJsonConfig("./config/game-ui.json", DEFAULT_UI_CONFIG),
+        loadJsonConfig("./config/fish-cursor.json", DEFAULT_FISH_CURSOR_CONFIG),
       ]);
 
     this._appConfig = appConfig;
