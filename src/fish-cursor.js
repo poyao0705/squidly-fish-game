@@ -1,15 +1,16 @@
 /**
- * @fileoverview WebGL Fish Cursor - Interactive 3D Fish Game Engine
+ * @fileoverview WebGL Fish Cursor - Three.js Fish Renderer
  *
  * This module provides a WebGL-based 3D fish cursor that follows the user's pointer
- * and collects floating stars. Built on Three.js for rendering.
+ * and renders floating collectible stars. Game rules and Firebase writes stay
+ * in app.js/game-service.js.
  *
  * ## Architecture Overview
  *
  * The system consists of three main components:
  * 1. **Fish Mesh** - A 3D blocky fish with animated fins, tail, and expressive eyes
  * 2. **Particle System** - Background particles that drift across the screen
- * 3. **Star System** - Collectible stars that float and twinkle, synced via Firebase
+ * 3. **Star Meshes** - Collectible stars that float and twinkle from app data
  *
  * ## Fish Design
  * - Body: Box geometry with flat shading for a "low-poly" aesthetic
@@ -18,8 +19,8 @@
  * - Eyes track movement with squinting based on speed
  *
  * ## Multiplayer Support
- * - Single-player mode: Host controls fish, random star generation
- * - Multiplayer mode: Only participant controls fish, host manages star placement
+ * - Single-player mode: Host controls fish by default
+ * - Multiplayer mode: Only participant controls fish
  * - Collision authority: Only the controlling client reports star collection
  *
  * ## Rendering Pipeline
@@ -42,16 +43,13 @@ import { createConfig } from "./fish-cursor-config.js";
 const threeCdn =
   "https://cdn.jsdelivr.net/npm/three@0.179.1/build/three.module.js";
 
-// Timeout (ms) after which a pointer is considered inactive
-const INACTIVE_TIMEOUT_MS = 2000;
-
 // Debug logging throttle
 let lastControllerLog = 0;
 let lastController = null;
 const CONTROLLER_LOG_THROTTLE_MS = 1000;
 
 /**
- * WebGLFishCursor - Main class for the 3D fish cursor game engine.
+ * WebGLFishCursor - Main class for the 3D fish cursor renderer.
  *
  * Creates a full-screen transparent WebGL canvas overlay with a 3D fish
  * that follows pointer input and collects floating stars.
@@ -158,7 +156,6 @@ class WebGLFishCursor {
 
     // Starfield
     this.stars = [];
-    this._starCells = [];
     this._starGlowTex = null;
     this._pendingFirebaseStars = null; // Queue for stars received before init completes
 
@@ -276,7 +273,7 @@ class WebGLFishCursor {
     this.fish.pointerX = w / 2;
     this.fish.pointerY = h / 2;
 
-    this._initStars();
+    this._clearStars();
 
     this._lastT = performance.now();
     this._collisionEnabledAt = performance.now() + 1000; // Enable collision after 1 second
@@ -299,16 +296,20 @@ class WebGLFishCursor {
     this._viewBoundsX = this._viewBoundsY * (this.camera.aspect || 1);
   }
 
-  _getStarGridSize() {
-    const n = Number(this.config.STAR_GRID_SIZE);
+  _normalizeStarGridSize(size) {
+    const n = Number(size);
     return Math.max(1, Math.min(4, Number.isFinite(n) ? Math.round(n) : 4));
+  }
+
+  _getStarGridSize() {
+    return this._normalizeStarGridSize(this.config.STAR_GRID_SIZE);
   }
 
   setStarGrid(size) {
     const n = Number(size);
     if (!Number.isFinite(n)) return;
 
-    const clamped = Math.max(1, Math.min(4, Math.round(n)));
+    const clamped = this._normalizeStarGridSize(size);
     if (this.config.STAR_GRID_SIZE === clamped) return;
 
     this.config.STAR_GRID_SIZE = clamped;
@@ -336,6 +337,61 @@ class WebGLFishCursor {
    */
   setIsHost(isHost) {
     this.isHost = isHost;
+  }
+
+  _isPointerActive(pointer, now) {
+    return (
+      pointer &&
+      now - pointer.lastSeen < this.config.INPUT_INACTIVE_TIMEOUT_MS
+    );
+  }
+
+  _selectController(now) {
+    const participantPointer = this.inputManager.getPointer("participant");
+    const hostPointer = this.inputManager.getPointer("host");
+
+    if (this._isPointerActive(participantPointer, now)) {
+      return {
+        activePointer: participantPointer,
+        currentController: "participant",
+      };
+    }
+
+    if (!this.isMultiplayerMode && hostPointer) {
+      return { activePointer: hostPointer, currentController: "host" };
+    }
+
+    return { activePointer: null, currentController: null };
+  }
+
+  _updateCollisionAuthority(currentController) {
+    if (this.isMultiplayerMode) {
+      this._isControllingFish =
+        !this.isHost && currentController === "participant";
+      return;
+    }
+
+    this._isControllingFish =
+      (this.isHost && currentController === "host") ||
+      (!this.isHost && currentController === "participant");
+  }
+
+  _logControllerChange(currentController, now) {
+    if (
+      currentController === lastController &&
+      now - lastControllerLog <= CONTROLLER_LOG_THROTTLE_MS
+    ) {
+      return;
+    }
+
+    if (currentController !== lastController) {
+      console.log(
+        `[Fish] Controller changed: ${lastController} -> ${currentController} (multiplayer: ${this.isMultiplayerMode})`,
+      );
+    }
+
+    lastController = currentController;
+    lastControllerLog = now;
   }
 
   /**
@@ -628,7 +684,7 @@ class WebGLFishCursor {
    * ## Pointer Control Logic
    *
    * **Single-player mode:**
-   * - Participant pointer has priority if active (within INACTIVE_TIMEOUT_MS)
+   * - Participant pointer has priority while active
    * - Falls back to host pointer if participant is inactive
    * - Whoever is controlling handles collision detection
    *
@@ -655,68 +711,9 @@ class WebGLFishCursor {
     this._lastT = now;
     const time = now * 0.001; // Total time in seconds (for animations)
 
-    // ============================================================
-    // POINTER CONTROL - Determine who controls the fish
-    // ============================================================
-    const participantPointer = this.inputManager.getPointer("participant");
-    const hostPointer = this.inputManager.getPointer("host");
-
-    let activePointer = null;
-    let currentController = null;
-
-    if (this.isMultiplayerMode) {
-      // MULTIPLAYER MODE: Only participant controls fish
-      // Host manages star spawning via grid UI instead
-      if (
-        participantPointer &&
-        now - participantPointer.lastSeen < INACTIVE_TIMEOUT_MS
-      ) {
-        activePointer = participantPointer;
-        currentController = "participant";
-      }
-      // No host fallback - fish stays still without active participant
-    } else {
-      // SINGLE-PLAYER MODE: Participant priority, host fallback
-      if (
-        participantPointer &&
-        now - participantPointer.lastSeen < INACTIVE_TIMEOUT_MS
-      ) {
-        activePointer = participantPointer;
-        currentController = "participant";
-      } else if (hostPointer) {
-        activePointer = hostPointer;
-        currentController = "host";
-      }
-    }
-
-    // ============================================================
-    // COLLISION AUTHORITY - Prevent double-counting star collection
-    // Only the client controlling the fish should report collisions
-    // ============================================================
-    if (this.isMultiplayerMode) {
-      // Multiplayer: participant client handles collisions when controlling
-      this._isControllingFish =
-        !this.isHost && currentController === "participant";
-    } else {
-      // Single-player: whoever is controlling handles collisions
-      this._isControllingFish =
-        (this.isHost && currentController === "host") ||
-        (!this.isHost && currentController === "participant");
-    }
-
-    // Debug logging (throttled)
-    if (
-      currentController !== lastController ||
-      now - lastControllerLog > CONTROLLER_LOG_THROTTLE_MS
-    ) {
-      if (currentController !== lastController) {
-        console.log(
-          `[Fish] Controller changed: ${lastController} -> ${currentController} (multiplayer: ${this.isMultiplayerMode})`,
-        );
-      }
-      lastController = currentController;
-      lastControllerLog = now;
-    }
+    const { activePointer, currentController } = this._selectController(now);
+    this._updateCollisionAuthority(currentController);
+    this._logControllerChange(currentController, now);
 
     // ============================================================
     // PARTICLE SPAWNING - Background visual effect
@@ -1015,7 +1012,7 @@ class WebGLFishCursor {
       geometryCore = new this.THREE.SphereGeometry(ray, sh, sv);
     }
 
-    const color = this._getRandomColor();
+    const color = this._getRandomColor(this.config.PARTICLE_COLORS);
     const materialCore = new this.THREE.MeshLambertMaterial({
       color: color,
       flatShading: true, // Low-poly aesthetic
@@ -1025,25 +1022,15 @@ class WebGLFishCursor {
   }
 
   /**
-   * Gets a random color from the PARTICLE_COLORS config array.
-   * Parses hex color strings and converts to THREE.Color.
+   * Gets a random color from a configured color palette.
    *
-   * @returns {THREE.Color} Random color from the particle palette
+   * @returns {THREE.Color} Random color from the palette
    * @private
    */
-  _getRandomColor() {
-    const hex =
-      this.config.PARTICLE_COLORS[
-        Math.floor(Math.random() * this.config.PARTICLE_COLORS.length)
-      ];
-    // Parse hex string (supports #RRGGBB format)
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    if (result) {
-      const r = parseInt(result[1], 16);
-      const g = parseInt(result[2], 16);
-      const b = parseInt(result[3], 16);
-      return new this.THREE.Color(`rgb(${r}, ${g}, ${b})`);
-    }
+  _getRandomColor(palette) {
+    const colors =
+      Array.isArray(palette) && palette.length ? palette : ["#fff"];
+    const hex = colors[Math.floor(Math.random() * colors.length)];
     return new this.THREE.Color(hex);
   }
 
@@ -1222,18 +1209,6 @@ class WebGLFishCursor {
   }
 
   /**
-   * Gets a random color from the STAR_COLORS palette.
-   *
-   * @returns {THREE.Color} Random star color (gold/yellow tones)
-   * @private
-   */
-  _getRandomStarColor() {
-    const { STAR_COLORS } = this.config;
-    const hex = STAR_COLORS[Math.floor(Math.random() * STAR_COLORS.length)];
-    return new this.THREE.Color(hex);
-  }
-
-  /**
    * Creates or returns the cached glow texture for star sprites.
    * Uses canvas to draw a radial gradient from white center to transparent edge.
    *
@@ -1341,7 +1316,7 @@ class WebGLFishCursor {
       size * 0.55,
       size * 0.28,
     );
-    const color = this._getRandomStarColor();
+    const color = this._getRandomColor(this.config.STAR_COLORS);
 
     // Core mesh - shiny physical material for "toy" appearance
     const coreMat = new this.THREE.MeshPhysicalMaterial({
@@ -1420,17 +1395,6 @@ class WebGLFishCursor {
   }
 
   /**
-   * Initializes the star system.
-   * Clears existing stars and waits for Firebase to provide star data.
-   * Stars are always managed via Firebase for consistent multiplayer sync.
-   *
-   * @private
-   */
-  _initStars() {
-    this._clearStars();
-  }
-
-  /**
    * Spawns a single star at the given grid cell position.
    * Creates the mesh and initializes animation parameters.
    *
@@ -1459,7 +1423,6 @@ class WebGLFishCursor {
       this.config.STAR_FLOAT_SPEED_MIN,
       this.config.STAR_FLOAT_SPEED_MAX,
     );
-    const depth = this._randBetween(0.2, this.config.STAR_DEPTH_RANGE);
     const spinSpeed = this._randBetween(
       this.config.STAR_SPIN_SPEED_MIN,
       this.config.STAR_SPIN_SPEED_MAX,
@@ -1477,11 +1440,9 @@ class WebGLFishCursor {
       basePosition, // Center of float animation
       radius, // Float wobble radius
       speed, // Float animation speed
-      depth, // Z-axis wobble (unused, kept at 0)
       spinSpeed, // Rotation speed
       phase, // Animation phase offset
     });
-    this._starCells.push(cell);
   }
 
   /**
@@ -1661,7 +1622,6 @@ class WebGLFishCursor {
         if (p >= 1) {
           this._disposeStarMesh(star.mesh);
           this.stars.splice(i, 1);
-          this._starCells.splice(i, 1);
         }
         continue;
       }
@@ -1772,7 +1732,6 @@ class WebGLFishCursor {
     if (!this.stars.length) return;
     this.stars.forEach((star) => this._disposeStarMesh(star.mesh));
     this.stars = [];
-    this._starCells = [];
   }
 
   _resize() {

@@ -46,7 +46,6 @@
  * @property {number} STAR_FLOAT_RADIUS - Radius of star floating animation
  * @property {number} STAR_FLOAT_SPEED_MIN - Min float animation speed
  * @property {number} STAR_FLOAT_SPEED_MAX - Max float animation speed
- * @property {number} STAR_DEPTH_RANGE - Z-axis wobble range
  * @property {number} STAR_SPIN_SPEED_MIN - Min rotation speed
  * @property {number} STAR_SPIN_SPEED_MAX - Max rotation speed
  * @property {string[]} STAR_COLORS - Array of hex color strings for stars
@@ -94,7 +93,6 @@ export const DEFAULT_CONFIG = {
   STAR_FLOAT_RADIUS: 0.35, // Radius of floating animation
   STAR_FLOAT_SPEED_MIN: 0.6, // Min float animation speed
   STAR_FLOAT_SPEED_MAX: 1.4, // Max float animation speed
-  STAR_DEPTH_RANGE: 1.2, // Z-axis wobble range
   STAR_SPIN_SPEED_MIN: 0.3, // Min rotation speed
   STAR_SPIN_SPEED_MAX: 1.1, // Max rotation speed
   STAR_COLORS: ["#ffea00", "#ffd54a", "#ffcc2a", "#fff3a0"], // Gold/yellow palette

@@ -31,7 +31,6 @@
   "STAR_FLOAT_RADIUS": 0.35,
   "STAR_FLOAT_SPEED_MIN": 0.6,
   "STAR_FLOAT_SPEED_MAX": 1.4,
-  "STAR_DEPTH_RANGE": 1.2,
   "STAR_SPIN_SPEED_MIN": 0.3,
   "STAR_SPIN_SPEED_MAX": 1.1,
   "STAR_COLORS": ["#ffea00", "#ffd54a", "#ffcc2a", "#fff3a0"],

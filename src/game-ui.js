@@ -2,7 +2,8 @@
  * @fileoverview Game UI Manager
  *
  * Manages all DOM-related UI elements for the Fish Game:
- * - Sidebar icons
+ * - HUD
+ * - Sidebar buttons
  * - Star control grid
  */
 
@@ -19,6 +20,7 @@ export class GameUI {
     this._starGridElement = null;
     this._starCells = [];
     this._swapButtonKey = null;
+    this._setStarsButtonKey = null;
     this._increaseGridButtonKey = null;
     this._onGridIncrease = null;
     this._canIncreaseGrid = false;
@@ -84,11 +86,7 @@ export class GameUI {
    * @param {Function} onSwapClick
    */
   updateSwapButton(isMultiplayerMode, onSwapClick) {
-    // Remove existing
-    if (this._swapButtonKey) {
-      SquidlyAPI.removeIcon(this._swapButtonKey);
-      this._swapButtonKey = null;
-    }
+    this._clearSidebarIcon("_swapButtonKey");
 
     if (isMultiplayerMode) {
       this._swapButtonKey = SquidlyAPI.setIcon(
@@ -96,12 +94,29 @@ export class GameUI {
         0,
         {
           symbol: "switch",
-          displayValue: "Swap Host/Participant Roles",
+          displayValue: "Swap Roles",
           type: "action",
         },
         onSwapClick,
       );
     }
+  }
+
+  updateSetStarsButton(shouldShow, onSetStarsClick) {
+    this._clearSidebarIcon("_setStarsButtonKey");
+
+    if (!shouldShow) return;
+
+    this._setStarsButtonKey = SquidlyAPI.setIcon(
+      2,
+      0,
+      {
+        symbol: "edit",
+        displayValue: "Set Stars",
+        type: "action",
+      },
+      onSetStarsClick,
+    );
   }
 
   /**
@@ -117,18 +132,8 @@ export class GameUI {
       return;
     }
 
-    // If grid needs to be created or recreated (size change check could be added for opt,
-    // but destroying/creating is safer for simplicity unless perf is issue)
-    // Here we can check if we already have a grid and if it matches size.
-    // For now, let's keep it robust: destroy and recreate if it doesn't match or to ensure cleanness.
-    // Optimisation: check if grid exists and size matches.
-
-    // Simple approach: Always recreate if showing to ensure correct state,
-    // or checks. Let's replicate original logic:
-    // Original logic called destroy then create.
     this._destroyStarControlGrid();
 
-    // Create grid container
     const grid = document.createElement("div");
     grid.className = "star-control-grid";
     grid.id = "star-control-grid";
@@ -166,7 +171,6 @@ export class GameUI {
     document.body.appendChild(grid);
     this._starGridElement = grid;
 
-    // Apply initial states
     this.updateStarCellStates(stars);
   }
 
@@ -196,10 +200,7 @@ export class GameUI {
   }
 
   _updateGridIncreaseControl() {
-    if (this._increaseGridButtonKey) {
-      SquidlyAPI.removeIcon(this._increaseGridButtonKey);
-      this._increaseGridButtonKey = null;
-    }
+    this._clearSidebarIcon("_increaseGridButtonKey");
 
     const isCompletedWithoutNextGrid =
       this._isLayoutComplete && !this._canIncreaseGrid;
@@ -217,7 +218,7 @@ export class GameUI {
           ? "Next Level"
           : isCompletedWithoutNextGrid
             ? "Grid Complete"
-            : `Next Level`,
+            : "Next Level",
         type: "action",
         disabled: !this._canIncreaseGrid,
       },
@@ -226,6 +227,12 @@ export class GameUI {
         this._onGridIncrease();
       },
     );
+  }
+
+  _clearSidebarIcon(keyProperty) {
+    if (!this[keyProperty]) return;
+    SquidlyAPI.removeIcon(this[keyProperty]);
+    this[keyProperty] = null;
   }
 
   _renderLayoutProgress() {

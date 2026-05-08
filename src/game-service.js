@@ -125,6 +125,52 @@ class GameService {
     return `star_${row}_${col}`;
   }
 
+  parseStarId(starId) {
+    const match = /^star_(\d+)_(\d+)$/.exec(String(starId));
+    if (!match) return null;
+
+    return {
+      row: Number(match[1]),
+      col: Number(match[2]),
+    };
+  }
+
+  createStarCellKey(row, col) {
+    return `${row}_${col}`;
+  }
+
+  parseStarCellKey(key) {
+    const [row, col] = String(key).split("_").map(Number);
+    if (
+      !Number.isInteger(row) ||
+      !Number.isInteger(col) ||
+      row < 0 ||
+      col < 0
+    ) {
+      return null;
+    }
+    return { row, col };
+  }
+
+  normalizeStarOffset(offset = {}) {
+    const offsetX = Number(offset?.offsetX);
+    const offsetY = Number(offset?.offsetY);
+
+    return {
+      offsetX: Number.isFinite(offsetX) ? offsetX : 0,
+      offsetY: Number.isFinite(offsetY) ? offsetY : 0,
+    };
+  }
+
+  createStar(row, col, offset = this.createRandomGridOffset()) {
+    return {
+      id: this.createStarId(row, col),
+      row,
+      col,
+      ...this.normalizeStarOffset(offset),
+    };
+  }
+
   /**
    * Creates a random normalized offset within a grid cell.
    *
@@ -170,13 +216,9 @@ class GameService {
 
     const selectedCells = allCells.slice(0, starCount);
 
-    // Create star objects with unique IDs
-    const stars = selectedCells.map((cell) => ({
-      id: this.createStarId(cell.row, cell.col),
-      row: cell.row,
-      col: cell.col,
-      ...this.createRandomGridOffset(),
-    }));
+    const stars = selectedCells.map((cell) =>
+      this.createStar(cell.row, cell.col),
+    );
 
     return stars;
   }
@@ -200,6 +242,9 @@ class GameService {
    * @returns {Array} result.remainingStars - Stars array with collected star removed
    */
   collectStar(starId) {
+    const cell = this.parseStarId(starId);
+    if (!cell) return null;
+
     const remainingStars = this.stars.filter((s) => s.id !== starId);
     const newScore = this.incrementScore();
 
@@ -208,56 +253,113 @@ class GameService {
     this.score = newScore;
 
     return {
+      cell,
       newScore,
       remainingStars,
     };
   }
 
-  /**
-   * Toggles a star at the given grid position
-   * If a star exists at (row, col), removes it. Otherwise, adds a new star.
-   *
-   * @param {number} row - Grid row (0-indexed)
-   * @param {number} col - Grid column (0-indexed)
-   * @returns {Array<{id: string, row: number, col: number, offsetX?: number, offsetY?: number}>} Updated stars array
-   */
-  toggleStarAtPosition(row, col) {
-    const existingIndex = this.stars.findIndex(
-      (s) => s.row === row && s.col === col,
-    );
+  parseStarCellValue(value) {
+    if (value === true) return this.normalizeStarOffset();
 
-    if (existingIndex >= 0) {
-      // Remove existing star
-      const newStars = [...this.stars];
-      newStars.splice(existingIndex, 1);
-      this.stars = newStars;
-      return newStars;
-    } else {
-      // Add new star
-      const newStar = {
-        id: this.createStarId(row, col),
-        row: row,
-        col: col,
-        ...this.createRandomGridOffset(),
-      };
-      const newStars = [...this.stars, newStar];
-      this.stars = newStars;
-      return newStars;
+    if (typeof value === "string") {
+      const [offsetX, offsetY] = value.split(",").map(Number);
+      if (Number.isFinite(offsetX) && Number.isFinite(offsetY)) {
+        return { offsetX, offsetY };
+      }
     }
+
+    if (value && typeof value === "object") {
+      return this.normalizeStarOffset(value);
+    }
+
+    return null;
   }
 
-  /**
-   * Determines if stars should be auto-regenerated
-   *
-   * Stars should regenerate in single-player mode when all are collected.
-   * In multiplayer mode, host must manually place stars.
-   *
-   * @param {Array} stars - Current stars array
-   * @param {boolean} isMultiplayerMode - Whether multiplayer mode is active
-   * @returns {boolean} True if stars should be regenerated
-   */
-  shouldRegenerateStars(stars, isMultiplayerMode) {
-    return !isMultiplayerMode && (!stars || stars.length === 0);
+  encodeStarCellValue(offset) {
+    const normalized = this.normalizeStarOffset(offset);
+    return `${normalized.offsetX},${normalized.offsetY}`;
+  }
+
+  createStarCellState(stars = []) {
+    const state = new Map();
+    if (!Array.isArray(stars)) return state;
+
+    stars.forEach((star) => {
+      const row = Number(star?.row);
+      const col = Number(star?.col);
+      if (
+        !Number.isInteger(row) ||
+        !Number.isInteger(col) ||
+        row < 0 ||
+        col < 0
+      ) {
+        return;
+      }
+      state.set(
+        this.createStarCellKey(row, col),
+        this.normalizeStarOffset(star),
+      );
+    });
+
+    return state;
+  }
+
+  starsFromCellState(cellState) {
+    const stars = [];
+    if (!cellState) return stars;
+
+    for (const [key, offset] of cellState) {
+      if (!offset) continue;
+
+      const cell = this.parseStarCellKey(key);
+      if (!cell) continue;
+      stars.push(this.createStar(cell.row, cell.col, offset));
+    }
+
+    return stars;
+  }
+
+  toggleStarCellState(cellState, row, col) {
+    const nextState = new Map(cellState);
+    const key = this.createStarCellKey(row, col);
+
+    if (nextState.has(key)) {
+      nextState.delete(key);
+    } else {
+      nextState.set(key, this.createRandomGridOffset());
+    }
+
+    return nextState;
+  }
+
+  createStarCommit(pendingState, currentStars, currentCellState) {
+    const stars = this.starsFromCellState(pendingState);
+    const targetKeys = new Set(
+      stars.map((star) => this.createStarCellKey(star.row, star.col)),
+    );
+    const currentKeys = new Set(
+      (Array.isArray(currentStars) ? currentStars : []).map((star) =>
+        this.createStarCellKey(star.row, star.col),
+      ),
+    );
+    const sourceState =
+      currentCellState ?? this.createStarCellState(currentStars);
+    const keysToClear = [];
+
+    for (const [key, exists] of sourceState) {
+      if (exists && !targetKeys.has(key)) keysToClear.push(key);
+    }
+
+    return {
+      stars,
+      keysToClear,
+      isSameVisibleStars:
+        stars.length === currentKeys.size &&
+        stars.every((star) =>
+          currentKeys.has(this.createStarCellKey(star.row, star.col)),
+        ),
+    };
   }
 
   /**
@@ -342,6 +444,12 @@ class GameService {
     return this.validateGridSize(this.validateGridSize(gridSize) + 1);
   }
 
+  getModeForParticipantPresence(participantActive) {
+    return participantActive === true
+      ? GAME_MODES.MULTIPLAYER
+      : GAME_MODES.SINGLE_PLAYER;
+  }
+
   /**
    * Determines whether automatic single-player star generation should run.
    *
@@ -363,7 +471,8 @@ class GameService {
     return (
       isHost === true &&
       !this.isLayoutComplete(progress, requiredClears) &&
-      this.shouldRegenerateStars(stars, isMultiplayerMode)
+      !isMultiplayerMode &&
+      (!stars || stars.length === 0)
     );
   }
 

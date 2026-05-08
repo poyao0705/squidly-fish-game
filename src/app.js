@@ -8,7 +8,6 @@
 import { WebGLFishCursor } from "./index.js";
 import GameService, {
   createGameRules,
-  GAME_MODES,
   GAME_RULES,
 } from "./game-service.js";
 import { GameUI } from "./game-ui.js";
@@ -79,10 +78,9 @@ class FishGame {
     this._unlockBackgroundMusic = null;
 
     // Per-cell star tracking
-    this._starStates = new Map(); // "R_C" → boolean
+    this._starStates = new Map(); // "R_C" -> { offsetX, offsetY } | null
     this._starListenersGridSize = null; // Grid size for which star listeners are active
     this._pendingStarStates = null; // Staged multiplayer star selections before pressing Set Stars
-    this._setStarsButtonKey = null;
     this._activeStarClearKeys = new Set();
     this._suppressNextLayoutClearProgress = false;
 
@@ -260,9 +258,9 @@ class FishGame {
     const defaults = {
       gridSize: this._gameRules.GRID_MIN_SIZE,
       score: 0,
-      gameMode: initialParticipantActive
-        ? GAME_MODES.MULTIPLAYER
-        : GAME_MODES.SINGLE_PLAYER,
+      gameMode: this._gameService.getModeForParticipantPresence(
+        initialParticipantActive,
+      ),
       isSwapped: false,
       layoutStarsEarned: 0,
     };
@@ -285,9 +283,6 @@ class FishGame {
   // ==========================================================================
 
   _setupEventListeners() {
-    // Local mouse
-
-    // Squidly API
     SquidlyAPI.addCursorListener((data) => {
       let isParticipant = data.user.includes("participant");
 
@@ -318,9 +313,8 @@ class FishGame {
 
     this._participantActive = participantActive;
 
-    const nextMode = participantActive
-      ? GAME_MODES.MULTIPLAYER
-      : GAME_MODES.SINGLE_PLAYER;
+    const nextMode =
+      this._gameService.getModeForParticipantPresence(participantActive);
 
     if (isInitialPresenceSync || participantActive !== this.isMultiplayerMode) {
       console.log(
@@ -445,8 +439,8 @@ class FishGame {
     // Ignore updates for cells outside current grid
     if (row >= this.gridSize || col >= this.gridSize) return;
 
-    const key = `${row}_${col}`;
-    const parsedValue = this._parseStarCellValue(value);
+    const key = this._gameService.createStarCellKey(row, col);
+    const parsedValue = this._gameService.parseStarCellValue(value);
     this._starStates.set(key, parsedValue);
 
     if (!parsedValue) {
@@ -456,35 +450,12 @@ class FishGame {
     this._rebuildFirebaseStars();
   }
 
-  _parseStarCellValue(value) {
-    if (value === true) {
-      return { offsetX: 0, offsetY: 0 };
-    }
-
-    if (typeof value === "string") {
-      const [offsetX, offsetY] = value.split(",").map(Number);
-      if (Number.isFinite(offsetX) && Number.isFinite(offsetY)) {
-        return { offsetX, offsetY };
-      }
-    }
-
-    if (value && typeof value === "object") {
-      const { offsetX, offsetY } = value;
-      return {
-        offsetX: typeof offsetX === "number" ? offsetX : 0,
-        offsetY: typeof offsetY === "number" ? offsetY : 0,
-      };
-    }
-
-    return null;
-  }
-
   /**
    * Rebuilds the firebaseStars array from per-cell state, then delegates
    * sync, progression, and auto-generation side effects.
    */
   _rebuildFirebaseStars() {
-    const stars = this._starsFromCellState();
+    const stars = this._gameService.starsFromCellState(this._starStates);
     const didClearLayout = this._layoutHadStars && stars.length === 0;
 
     this._syncStars(stars);
@@ -493,25 +464,6 @@ class FishGame {
       this._gameRules.STAR_REGEN_DELAY_MS,
       stars,
     );
-  }
-
-  _starsFromCellState() {
-    const stars = [];
-
-    for (const [key, starData] of this._starStates) {
-      if (!starData) continue;
-
-      const [row, col] = key.split("_").map(Number);
-      stars.push({
-        id: this._gameService.createStarId(row, col),
-        row,
-        col,
-        offsetX: typeof starData.offsetX === "number" ? starData.offsetX : 0,
-        offsetY: typeof starData.offsetY === "number" ? starData.offsetY : 0,
-      });
-    }
-
-    return stars;
   }
 
   _syncStars(stars) {
@@ -737,22 +689,8 @@ class FishGame {
   }
 
   _updateSetStarsButton() {
-    if (this._setStarsButtonKey) {
-      SquidlyAPI.removeIcon(this._setStarsButtonKey);
-      this._setStarsButtonKey = null;
-    }
-
-    if (!this.isMultiplayerMode || !this.isHost) return;
-
-    this._setStarsButtonKey = SquidlyAPI.setIcon(
-      2,
-      0,
-      {
-        symbol: "edit",
-        displayValue: "Set Stars",
-        type: "action",
-      },
-      () => this._setStagedStars(),
+    this._ui.updateSetStarsButton(this.isMultiplayerMode && this.isHost, () =>
+      this._setStagedStars(),
     );
   }
 
@@ -761,16 +699,7 @@ class FishGame {
   }
 
   _createPendingStarStateFromFirebase() {
-    const pending = new Map();
-
-    this.firebaseStars.forEach((star) => {
-      pending.set(`${star.row}_${star.col}`, {
-        offsetX: typeof star.offsetX === "number" ? star.offsetX : 0,
-        offsetY: typeof star.offsetY === "number" ? star.offsetY : 0,
-      });
-    });
-
-    return pending;
+    return this._gameService.createStarCellState(this.firebaseStars);
   }
 
   _getPendingStarStates() {
@@ -781,26 +710,9 @@ class FishGame {
     return this._pendingStarStates;
   }
 
-  _starsFromPendingState(pendingStates) {
-    const stars = [];
-
-    for (const [key, offset] of pendingStates) {
-      const [row, col] = key.split("_").map(Number);
-      stars.push({
-        id: this._gameService.createStarId(row, col),
-        row,
-        col,
-        offsetX: typeof offset.offsetX === "number" ? offset.offsetX : 0,
-        offsetY: typeof offset.offsetY === "number" ? offset.offsetY : 0,
-      });
-    }
-
-    return stars;
-  }
-
   _getStarGridDisplayStars() {
     if (!this._pendingStarStates) return this.firebaseStars;
-    return this._starsFromPendingState(this._pendingStarStates);
+    return this._gameService.starsFromCellState(this._pendingStarStates);
   }
 
   _setStagedStars() {
@@ -808,24 +720,14 @@ class FishGame {
 
     const pendingStates =
       this._pendingStarStates ?? this._createPendingStarStateFromFirebase();
-    const stars = this._starsFromPendingState(pendingStates);
+    const { stars, keysToClear, isSameVisibleStars } =
+      this._gameService.createStarCommit(
+        pendingStates,
+        this.firebaseStars,
+        this._starStates,
+      );
 
-    const targetKeys = new Set(stars.map((star) => `${star.row}_${star.col}`));
-    const currentKeys = new Set(
-      this.firebaseStars.map((star) => `${star.row}_${star.col}`),
-    );
-    const isRecommittingSameVisibleStars =
-      stars.length === this.firebaseStars.length &&
-      stars.every((star) => currentKeys.has(`${star.row}_${star.col}`));
-
-    const keysToClear = [];
-    for (const [key, exists] of this._starStates) {
-      if (exists && !targetKeys.has(key)) {
-        keysToClear.push(key);
-      }
-    }
-
-    if (!isRecommittingSameVisibleStars) {
+    if (!isSameVisibleStars) {
       this._layoutHadStars = false;
     }
 
@@ -843,8 +745,8 @@ class FishGame {
 
     stars.forEach((star) => {
       SquidlyAPI.firebaseSet(
-        `stars/${star.row}_${star.col}`,
-        this._encodeStarOffset(star),
+        `stars/${this._gameService.createStarCellKey(star.row, star.col)}`,
+        this._gameService.encodeStarCellValue(star),
       );
     });
 
@@ -878,25 +780,14 @@ class FishGame {
     );
   }
 
-  _createRandomStarOffset() {
-    return this._gameService.createRandomGridOffset();
-  }
-
-  _encodeStarOffset(offset) {
-    return `${offset.offsetX},${offset.offsetY}`;
-  }
-
   _onStarCellClick(row, col) {
     if (!this.isMultiplayerMode || !this.isHost) return;
 
-    const key = `${row}_${col}`;
-    const pendingStates = this._getPendingStarStates();
-
-    if (pendingStates.has(key)) {
-      pendingStates.delete(key);
-    } else {
-      pendingStates.set(key, this._createRandomStarOffset());
-    }
+    this._pendingStarStates = this._gameService.toggleStarCellState(
+      this._getPendingStarStates(),
+      row,
+      col,
+    );
 
     this._ui.updateStarCellStates(this._getStarGridDisplayStars());
   }
@@ -907,53 +798,44 @@ class FishGame {
     // Clear all existing stars
     this._clearAllStarsInFirebase();
 
-    // Generate new random stars and set each individually
     const stars = this._gameService.generateRandomStars(this.gridSize);
     stars.forEach((star) => {
-      const fallbackOffset = this._createRandomStarOffset();
-      const offset = {
-        offsetX:
-          typeof star.offsetX === "number"
-            ? star.offsetX
-            : fallbackOffset.offsetX,
-        offsetY:
-          typeof star.offsetY === "number"
-            ? star.offsetY
-            : fallbackOffset.offsetY,
-      };
       SquidlyAPI.firebaseSet(
-        `stars/${star.row}_${star.col}`,
-        this._encodeStarOffset(offset),
+        `stars/${this._gameService.createStarCellKey(star.row, star.col)}`,
+        this._gameService.encodeStarCellValue(star),
       );
     });
   }
 
-  incrementScore() {
-    const newScore = this._gameService.incrementScore();
-    this.score = newScore;
-    SquidlyAPI.firebaseSet("score", newScore);
+  _syncScoreAfterCollect(starId) {
+    const result = this._gameService.collectStar(starId);
+    if (!result) return null;
+
+    this.score = result.newScore;
+    SquidlyAPI.firebaseSet("score", result.newScore);
+    return result;
+  }
+
+  _playCollectStarSfx() {
+    if (!this._collectStarSfx) return;
+    this._collectStarSfx.currentTime = 0;
+    this._collectStarSfx.play().catch(() => {});
   }
 
   onStarCollected(starId) {
     if (!starId) return;
 
-    // Parse row/col from star ID format "star_row_col"
-    const parts = starId.split("_");
-    const row = Number(parts[1]);
-    const col = Number(parts[2]);
-    if (isNaN(row) || isNaN(col)) return;
+    const result = this._syncScoreAfterCollect(starId);
+    if (!result) return;
 
-    // Play collect SFX
-    this._collectStarSfx.currentTime = 0;
-    this._collectStarSfx.play().catch(() => {});
+    this._playCollectStarSfx();
 
     // Remove star (listener will update local state)
-    SquidlyAPI.firebaseSet(`stars/${row}_${col}`, null);
-
-    // Increment score
-    const newScore = this._gameService.incrementScore();
-    this.score = newScore;
-    SquidlyAPI.firebaseSet("score", newScore);
+    const key = this._gameService.createStarCellKey(
+      result.cell.row,
+      result.cell.col,
+    );
+    SquidlyAPI.firebaseSet(`stars/${key}`, null);
 
     console.log(`[FishGame] Star collected: ${starId}`);
   }
