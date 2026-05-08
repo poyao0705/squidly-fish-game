@@ -124,22 +124,15 @@ body {
 
 /* Top HUD */
 #top-hud {
-    position: fixed;
+    position: relative;
     top: clamp(10px, 2vh, 20px);
     left: 50%;
     transform: translateX(-50%);
+    width: fit-content;
+    margin: 0;
     display: flex;
     align-items: stretch;
     gap: clamp(10px, 2vw, 18px);
-    padding: clamp(8px, 1.5vw, 12px);
-    background: rgba(20, 14, 42, 0.72);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: clamp(14px, 2vw, 22px);
-    box-shadow:
-        0 8px 32px rgba(0, 0, 0, 0.32),
-        inset 0 1px 0 rgba(255, 255, 255, 0.12);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
     z-index: 9999;
     font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
     pointer-events: none;
@@ -152,6 +145,7 @@ body {
     min-height: clamp(42px, 6vh, 58px);
     padding: clamp(8px, 1.5vw, 12px) clamp(12px, 2vw, 18px);
     border-radius: clamp(10px, 1.5vw, 16px);
+    justify-content: center;
 }
 
 #top-hud .layout-progress-section {
@@ -192,11 +186,11 @@ body {
 }
 
 #top-hud .hud-progress-text {
-    min-width: clamp(86px, 13vw, 132px);
+    min-width: auto;
     font-size: clamp(12px, 1.8vw, 16px);
     font-weight: 700;
     color: rgba(255, 255, 255, 0.9);
-    text-align: left;
+    text-align: center;
 }
 
 @media (max-width: 640px) {

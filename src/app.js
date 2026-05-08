@@ -6,10 +6,7 @@
  */
 
 import { WebGLFishCursor } from "./index.js";
-import GameService, {
-  createGameRules,
-  GAME_RULES,
-} from "./game-service.js";
+import GameService, { createGameRules, GAME_RULES } from "./game-service.js";
 import { GameUI } from "./game-ui.js";
 import { loadJsonConfig } from "../config/loader.js";
 import { DEFAULT_CONFIG as DEFAULT_FISH_CURSOR_CONFIG } from "./fish-cursor-config.js";
@@ -330,6 +327,7 @@ class FishGame {
     this._ui.setupGridControls({
       canIncreaseGrid: this._canIncreaseGrid(),
       onGridIncrease: () => this._advanceGrid(),
+      onHome: () => this._returnHome(),
     });
 
     // Initial mode-dependent button checks
@@ -520,6 +518,21 @@ class FishGame {
     });
   }
 
+  /**
+   * Clears every possible star cell, including cells from larger grids that may
+   * no longer have active listeners after returning to a smaller grid.
+   */
+  _clearAllStageStarsInFirebase() {
+    this._activeStarClearKeys.clear();
+
+    for (let row = 0; row < this._gameRules.GRID_MAX_SIZE; row++) {
+      for (let col = 0; col < this._gameRules.GRID_MAX_SIZE; col++) {
+        const key = this._gameService.createStarCellKey(row, col);
+        SquidlyAPI.firebaseSet(`stars/${key}`, null);
+      }
+    }
+  }
+
   // ==========================================================================
   // LOGIC & ACTIONS
   // ==========================================================================
@@ -583,6 +596,34 @@ class FishGame {
       this._resetLayoutProgress();
       SquidlyAPI.firebaseSet("gridSize", newSize);
     }
+  }
+
+  _returnHome() {
+    this._resetPendingStarSelection();
+    this._layoutHadStars = false;
+    this.firebaseStars = [];
+    this._gameService.setStars([]);
+    if (this.currentCursor) {
+      this.currentCursor.syncStarsFromFirebase([]);
+    }
+
+    this._clearAllStageStarsInFirebase();
+    this._resetLayoutProgress();
+    this._gameService.setScore(0);
+
+    SquidlyAPI.firebaseSet("score", 0);
+    this.gridSize = this._gameService.setGridSize(
+      this._gameRules.GRID_MIN_SIZE,
+    );
+    if (this.currentCursor) {
+      this.currentCursor.setStarGrid(this.gridSize);
+    }
+    SquidlyAPI.firebaseSet("gridSize", this._gameRules.GRID_MIN_SIZE);
+
+    this._updateStarGridUI();
+    this._scheduleSinglePlayerStarGeneration();
+
+    console.log("[FishGame] Returned home to the first grid.");
   }
 
   _shouldGenerateSinglePlayerStars(stars = this.firebaseStars) {

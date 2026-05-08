@@ -23,6 +23,7 @@ export class GameUI {
     this._setStarsButtonKey = null;
     this._increaseGridButtonKey = null;
     this._onGridIncrease = null;
+    this._onHome = null;
     this._canIncreaseGrid = false;
     this._isLayoutComplete = false;
     this._layoutStarsEarned = 0;
@@ -38,10 +39,11 @@ export class GameUI {
 
   /**
    * Sets up sidebar icon for gated Grid progression.
-   * @param {Object} callbacks - { onGridIncrease, canIncreaseGrid }
+   * @param {Object} callbacks - { onGridIncrease, onHome, canIncreaseGrid }
    */
-  setupGridControls({ onGridIncrease, canIncreaseGrid = false }) {
+  setupGridControls({ onGridIncrease, onHome, canIncreaseGrid = false }) {
     this._onGridIncrease = onGridIncrease;
+    this._onHome = onHome;
     this._canIncreaseGrid = canIncreaseGrid;
     this._updateGridIncreaseControl();
   }
@@ -204,6 +206,12 @@ export class GameUI {
 
     const isCompletedWithoutNextGrid =
       this._isLayoutComplete && !this._canIncreaseGrid;
+    const displayValue = this._canIncreaseGrid
+      ? "Next Level"
+      : isCompletedWithoutNextGrid
+        ? "Home"
+        : "Next Level";
+    const disabled = !this._canIncreaseGrid && !isCompletedWithoutNextGrid;
 
     this._increaseGridButtonKey = SquidlyAPI.setIcon(
       1,
@@ -212,19 +220,21 @@ export class GameUI {
         symbol: this._canIncreaseGrid
           ? "add"
           : isCompletedWithoutNextGrid
-            ? "tick"
+            ? "home"
             : "lock",
-        displayValue: this._canIncreaseGrid
-          ? "Next Level"
-          : isCompletedWithoutNextGrid
-            ? "Grid Complete"
-            : "Next Level",
+        displayValue,
         type: "action",
-        disabled: !this._canIncreaseGrid,
+        disabled,
       },
       () => {
-        if (!this._canIncreaseGrid || !this._onGridIncrease) return;
-        this._onGridIncrease();
+        if (this._canIncreaseGrid) {
+          if (this._onGridIncrease) this._onGridIncrease();
+          return;
+        }
+
+        if (isCompletedWithoutNextGrid && this._onHome) {
+          this._onHome();
+        }
       },
     );
   }
@@ -253,7 +263,7 @@ export class GameUI {
     this._layoutProgressTextElement.textContent = this._isLayoutComplete
       ? this._canIncreaseGrid
         ? "Next grid unlocked"
-        : "Grid complete"
+        : "Ready for home"
       : `${this._layoutStarsEarned}/${this._layoutStarsRequired} clears`;
   }
 
